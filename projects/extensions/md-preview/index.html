@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.65 system-ui, -apple-system, "Segoe UI", sans-serif; margin: 0; padding: 14px 18px 60px; }
+  body.dark { background: #15171c; color: #e6e7ea; }
+  [data-b] { border-radius: 6px; padding: 0 6px; margin-left: -6px; cursor: pointer; }
+  [data-b]:hover { background: rgba(99, 102, 241, .12); }
+  pre { background: rgba(127, 127, 127, .12); padding: 8px 10px; border-radius: 6px; overflow: auto; }
+  code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; }
+  table { border-collapse: collapse; } td, th { border: 1px solid rgba(127, 127, 127, .4); padding: 3px 8px; }
+  #sel { position: fixed; right: 12px; bottom: 12px; display: none; }
+  .hint { color: #888; font-size: 12px; }
+</style>
+</head>
+<body>
+<p class="hint">Click a block to quote it. Select text, then press “Quote selection”.</p>
+<main id="doc"></main>
+<button id="sel" type="button">📎 Quote selection</button>
+<script src="aether-sdk.js"></script>
+<script>
+// A deliberately small Markdown renderer: headings, lists, quotes, code fences, tables, paragraphs, **bold**, *italic*, `code`, [links](url).
+const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const inline = (s) => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
+  .replace(/\*([^*]+)\*/g, "<i>$1</i>").replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+function blocks(md) {   // [{html, src}] ―― src is the original text of the block (what a quote carries)
+  const lines = md.replace(/\r\n?/g, "\n").split("\n"), out = [];
+  for (let i = 0; i < lines.length;) {
+    const l = lines[i];
+    if (!l.trim()) { i++; continue; }
+    if (/^```/.test(l)) { let j = i + 1; while (j < lines.length && !/^```/.test(lines[j])) j++; out.push({ src: lines.slice(i, j + 1).join("\n"), html: `<pre><code>${esc(lines.slice(i + 1, j).join("\n"))}</code></pre>` }); i = j + 1; continue; }
+    const h = l.match(/^(#{1,6})\s+(.*)/);
+    if (h) { out.push({ src: l, html: `<h${h[1].length}>${inline(h[2])}</h${h[1].length}>` }); i++; continue; }
+    const take = (re) => { let j = i; while (j < lines.length && re.test(lines[j])) j++; const s = lines.slice(i, j); i = j; return s; };
+    if (/^\s*([-*+]|\d+\.)\s/.test(l)) { const s = take(/^\s*([-*+]|\d+\.)\s|^\s{2,}\S/); const tag = /^\s*\d+\./.test(l) ? "ol" : "ul"; out.push({ src: s.join("\n"), html: `<${tag}>${s.map((x) => `<li>${inline(x.replace(/^\s*([-*+]|\d+\.)\s/, ""))}</li>`).join("")}</${tag}>` }); continue; }
+    if (/^>/.test(l)) { const s = take(/^>/); out.push({ src: s.join("\n"), html: `<blockquote>${inline(s.map((x) => x.replace(/^>\s?/, "")).join(" "))}</blockquote>` }); continue; }
+    if (/^\|/.test(l)) { const s = take(/^\|/); const rows = s.filter((x) => !/^\|[\s:|-]+\|$/.test(x)).map((x) => x.replace(/^\||\|$/g, "").split("|")); out.push({ src: s.join("\n"), html: `<table>${rows.map((r, k) => `<tr>${r.map((c) => `<${k ? "td" : "th"}>${inline(c.trim())}</${k ? "td" : "th"}>`).join("")}</tr>`).join("")}</table>` }); continue; }
+    const s = take(/^(?!\s*$|#|```|>|\||\s*([-*+]|\d+\.)\s)/); out.push({ src: s.join("\n"), html: `<p>${inline(s.join(" "))}</p>` });
+  }
+  return out;
+}
+let name = "";
+aether.on("theme", (d) => document.body.classList.toggle("dark", !!d.dark));
+aether.on("open", (d) => {
+  name = d.name;
+  const doc = document.getElementById("doc");
+  if (d.error) { doc.textContent = d.error; return; }
+  const bs = blocks(d.text || "");
+  doc.innerHTML = bs.map((b, k) => `<div data-b="${k}">${b.html}</div>`).join("");
+  doc.querySelectorAll("[data-b]").forEach((e) => e.addEventListener("click", (ev) => {
+    if (ev.target.closest("a") || String(getSelection())) return;
+    const b = bs[+e.dataset.b];
+    aether.quote(e.textContent.trim().slice(0, 40), b.src);
+  }));
+});
+const selBtn = document.getElementById("sel");
+document.addEventListener("selectionchange", () => { selBtn.style.display = String(getSelection()).trim() ? "block" : "none"; });
+selBtn.addEventListener("click", () => { const t = String(getSelection()).trim(); if (t) aether.quote(t.slice(0, 40), t); getSelection().removeAllRanges(); });
+</script>
+</body>
+</html>

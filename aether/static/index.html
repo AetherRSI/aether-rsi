@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AetherRSI</title>
+<link rel="stylesheet" href="static/core.css">
+</head>
+<body>
+<header id="head"><b>AetherRSI</b><span id="ws"></span><span id="lock"></span><span id="warn" hidden></span></header>
+<main id="main">
+  <section id="log" aria-label="Conversation"></section>
+  <section id="panel" aria-label="Panel">
+    <div id="tabs" role="tablist">
+      <button type="button" role="tab" data-tab="tasks">📋 Tasks</button>
+      <button type="button" role="tab" data-tab="files">📂 Files</button>
+    </div>
+    <div id="pane-tasks" class="pane"></div>
+    <div id="pane-files" class="pane" hidden></div>
+  </section>
+</main>
+<form id="composer" aria-label="Send a message">
+  <div id="chips" hidden></div>
+  <div class="row">
+    <textarea id="say" rows="2" placeholder="Ask the agent… (⌘/Ctrl+Enter to send)"></textarea>
+    <div class="side">
+      <select id="agent" aria-label="Agent"></select>
+      <button id="send" type="submit">Send</button>
+    </div>
+  </div>
+</form>
+<script src="static/core.js"></script>
+</body>
+</html>

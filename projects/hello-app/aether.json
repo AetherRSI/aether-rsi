@@ -1,0 +1,8 @@
+{
+  "aether": "0.1",
+  "kind": "app",
+  "id": "hello-app",
+  "label": "Ideas board",
+  "entry": "index.html",
+  "agent_rules": "CLAUDE.md"
+}

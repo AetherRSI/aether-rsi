@@ -1,0 +1,9 @@
+{
+  "aether": "0.1",
+  "kind": "agent",
+  "id": "claude-code",
+  "label": "🤖 Claude Code",
+  "command": ["{python}", "{dir}/agent.py"],
+  "inject": true,
+  "guard": true
+}

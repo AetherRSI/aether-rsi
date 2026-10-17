@@ -1,0 +1,9 @@
+{
+  "aether": "0.1",
+  "kind": "agent",
+  "id": "echo-agent",
+  "label": "🔁 Echo (demo)",
+  "command": ["{python}", "{dir}/agent.py"],
+  "inject": true,
+  "guard": true
+}
