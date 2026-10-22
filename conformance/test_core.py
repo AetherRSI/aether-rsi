@@ -215,6 +215,37 @@ class Api(unittest.TestCase):
         self.assertEqual(s.task("t1")["ref"], "")
         self.assertEqual(s.update_task("t1", ref="app/sessions/1#a")["ref"], "app/sessions/1#a")
 
+    def test_the_store_runs_in_wal(self):
+        import sqlite3
+        from aether.store import Store
+        db = Path(tempfile.mkdtemp()) / "new.db"
+        Store(db)
+        with sqlite3.connect(db) as c:
+            self.assertEqual(c.execute("pragma journal_mode").fetchone()[0], "wal")
+
+    def test_a_locked_store_does_not_end_the_queue(self):
+        """ready() raising (database is locked) once must not kill the loop: it asks again and starts what waits."""
+        import sqlite3
+        import threading
+        from aether.runner import Runner
+
+        class Flaky:
+            def __init__(self):
+                self.calls = 0
+                self.asked = threading.Event()
+
+            def ready(self):
+                self.calls += 1
+                if self.calls == 1:
+                    raise sqlite3.OperationalError("database is locked")
+                self.asked.set()
+                return []
+
+        store = Flaky()
+        r = Runner(store, {}, Path(tempfile.mkdtemp()), [], Path(tempfile.mkdtemp()))
+        threading.Thread(target=r.loop, daemon=True).start()
+        self.assertTrue(store.asked.wait(3), "the loop died on the first locked read")
+
     def test_a_running_task_shows_running_and_counts_its_queue(self):
         """One job runs and the next of the same task waits: the task says running (not queued) and 1 queued."""
         _, r = self.live.json("api/send", {"text": "/slow first", "agent": "echo-agent"})

@@ -52,6 +52,7 @@ class Store:
         self.path = str(path)
         self.lock = threading.Lock()
         with self._db() as c:
+            c.execute("pragma journal_mode=wal")   # readers stop blocking writers: a step line waited out the 10 s and failed its job (2026-10-23)
             c.executescript(SCHEMA)
             if "ref" not in [r[1] for r in c.execute("pragma table_info(tasks)")]:   # a store made before ref existed
                 c.execute("alter table tasks add column ref text not null default ''")

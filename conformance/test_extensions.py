@@ -334,7 +334,7 @@ class GeminiArgon(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         events = [json.loads(line) for line in p.stdout.splitlines() if line.strip()]
         self.assertEqual([e["session"] for e in events if "session" in e], ["sid-123"])
-        self.assertTrue(any("🔄 API通信エラー（fetch failed）を検知" in e.get("step", "") for e in events))
+        self.assertTrue(any(e.get("step", "").startswith("🔄 API通信エラー") and "fetch failed" in e["step"] for e in events))
         done = next(e for e in events if e.get("done"))
         self.assertEqual((done["reply"], done["tokens"]), ("recovered ok", 42))
         calls = [json.loads(x) for x in args_log.read_text().splitlines()]
@@ -342,6 +342,55 @@ class GeminiArgon(unittest.TestCase):
         self.assertNotIn("--resume", calls[0])
         self.assertIn("--resume", calls[1])
         self.assertEqual(calls[1][calls[1].index("--resume") + 1], "sid-123")
+
+    def _run_fake(self, first_failure: str, start: dict):
+        """A fake gemini that fails its first run with first_failure on stderr, then succeeds. → (events, argv of each run)"""
+        import subprocess
+        import sys
+        ag_path = SAMPLES / "extensions/agent/gemini-argon/agent.py"
+        tmp = Path(tempfile.mkdtemp())
+        state_file, args_log, fake = tmp / "count.txt", tmp / "args.jsonl", tmp / "fake_gemini.py"
+        fake.write_text(
+            f"#!{sys.executable}\n"
+            "import json, pathlib, sys\n"
+            f"sf = pathlib.Path({str(state_file)!r})\n"
+            f"af = pathlib.Path({str(args_log)!r})\n"
+            "n = int(sf.read_text()) if sf.exists() else 0\n"
+            "sf.write_text(str(n + 1))\n"
+            "with af.open('a') as f: f.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+            "if n == 0:\n"
+            f"    sys.stderr.write({first_failure!r} + '\\n')\n"
+            "    sys.exit(1)\n"
+            "print(json.dumps({'type': 'init', 'session_id': 'sid-new'}), flush=True)\n"
+            "print(json.dumps({'type': 'message', 'role': 'assistant', 'content': 'ok'}), flush=True)\n"
+            "print(json.dumps({'type': 'result', 'status': 'success', 'stats': {'total_tokens': 1}}), flush=True)\n",
+            encoding="utf-8",
+        )
+        fake.chmod(0o755)
+        env = {**os.environ, "AETHER_GEMINI": str(fake), "AETHER_GEMINI_RETRY_DELAYS": "0.01,0.02", "AETHER_BUDGET": ""}
+        p = subprocess.run([sys.executable, str(ag_path)], input=json.dumps({**start, "cwd": str(tmp)}) + "\n",
+                           capture_output=True, text=True, env=env, timeout=10)
+        self.assertEqual(p.returncode, 0, p.stderr)
+        events = [json.loads(line) for line in p.stdout.splitlines() if line.strip()]
+        return events, [json.loads(x) for x in args_log.read_text().splitlines()]
+
+    def test_retries_a_terminated_stream(self):
+        events, calls = self._run_fake("[API Error: terminated]", {"prompt": "do work", "session": "sid-old"})
+        self.assertTrue(any(e.get("step", "").startswith("🔄 API通信エラー（API Error: terminated）") for e in events))
+        self.assertTrue(next(e for e in events if e.get("done")))
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1][calls[1].index("--resume") + 1], "sid-old")   # the same conversation goes on
+
+    def test_a_missing_session_starts_a_new_one_with_the_rules(self):
+        events, calls = self._run_fake("Error resuming session: No previous sessions found for this project.",
+                                       {"prompt": "do work", "session": "sid-gone"})
+        self.assertTrue(any(e.get("step", "").startswith("🆕") for e in events))
+        self.assertEqual(next(e for e in events if e.get("done"))["reply"], "ok")
+        self.assertEqual(len(calls), 2)
+        self.assertIn("--resume", calls[0])
+        self.assertNotIn("--resume", calls[1])
+        prompt = calls[1][calls[1].index("-p") + 1]
+        self.assertTrue(prompt.endswith("do work") and len(prompt) > len("do work"))   # the rules are back in front
 
 
 if __name__ == "__main__":
