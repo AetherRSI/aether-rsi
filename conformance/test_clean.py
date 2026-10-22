@@ -34,6 +34,13 @@ class Clean(unittest.TestCase):
             hits += [f"{f.relative_to(REPO)}: {w}" for w in words if w in low]
         self.assertEqual(hits, [])
 
+    def test_machine_settings_stay_local(self):
+        """settings.json holds this machine's paths and project ids (where the credentials are): ignored, never committed.
+        settings.example.json is the template that ships."""
+        self.assertNotIn(REPO / "settings.json", tracked())
+        self.assertIn("settings.json", (REPO / ".gitignore").read_text().split())
+        self.assertTrue((REPO / "settings.example.json").is_file())
+
 
 if __name__ == "__main__":
     unittest.main()

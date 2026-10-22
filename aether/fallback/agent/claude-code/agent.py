@@ -46,9 +46,19 @@ def step(ev: dict) -> str:
     return ""
 
 
+def find_claude():
+    """AETHER_CLAUDE if it still exists, else the PATH, else the newest copy bundled with the Claude desktop app (macOS).
+    The bundled path carries the app's version, so a value set at start goes stale when the app updates."""
+    exe = os.environ.get("AETHER_CLAUDE")
+    if exe and os.path.exists(exe):
+        return exe
+    bundled = Path.home().glob("Library/Application Support/Claude/claude-code/*/*/claude.app/Contents/MacOS/claude")
+    return shutil.which("claude") or max((str(p) for p in bundled), key=os.path.getmtime, default=None)
+
+
 def main():
     start = json.loads(sys.stdin.readline())
-    exe = os.environ.get("AETHER_CLAUDE") or shutil.which("claude")
+    exe = find_claude()
     if not exe:
         out(error="claude not found: install Claude Code or set AETHER_CLAUDE")
         return

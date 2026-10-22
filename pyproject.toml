@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aether-rsi"
+dynamic = ["version"]
+description = "A small, local workbench for coding agents: a message queue, a task list and a file tree. Everything else is an extension."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+aether = "aether.__main__:cli"
+
+[tool.setuptools]
+packages = ["aether"]
+
+[tool.setuptools.package-data]
+aether = ["static/*", "fallback/*/*/*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "aether.VERSION" }

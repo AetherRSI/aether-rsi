@@ -3,3 +3,7 @@ __pycache__/
 .DS_Store
 .env
 *.db
+build/
+*.egg-info/
+dist/
+settings.json

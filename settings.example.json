@@ -1,0 +1,9 @@
+{
+  "extensions": ["/abs/path/to/your/extensions"],
+  "vertex": {
+    "credentials": "/abs/path/to/service-account-key.json",
+    "project": "your-gcp-project-id",
+    "region": "global"
+  },
+  "env": {}
+}

@@ -40,14 +40,22 @@ def listing(ws: Path, rel: str, deny=()) -> dict:
         except Outside:
             continue
         item = {"name": c.name, "path": str(c.relative_to(ws)), "dir": c.is_dir()}
-        if c.is_dir():
+        if not c.is_dir():
+            item["size"] = c.stat().st_size
+        else:
             app = app_of(c)
             if app:
-                item["app"] = {"label": app["label"], "entry": app["entry"], "rules": app.get("agent_rules") or ""}
+                item["app"] = _app_ui(app)
         items.append(item)
     here = app_of(p) if p != ws else None
     return {"path": "" if p == ws else str(p.relative_to(ws)), "items": items,
-            "app": {"label": here["label"], "entry": here["entry"], "rules": here.get("agent_rules") or ""} if here else None}
+            "app": _app_ui(here) if here else None}
+
+
+def _app_ui(app: dict) -> dict:
+    """What the shell needs of an app's manifest."""
+    return {"label": app["label"], "entry": app.get("entry") or "", "url": app.get("url") or "", "rules": app.get("agent_rules") or "",
+            "ports": app.get("ports") or []}
 
 
 def read(ws: Path, rel: str, deny=()) -> str:

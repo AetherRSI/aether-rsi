@@ -1,22 +1,30 @@
 """HTTP server (standard library only). Relative URLs everywhere, so it also works under a reverse proxy prefix.
 
   GET  /                      the shell (static/index.html)
-  GET  /api/info              name, version, lock, agents, previews, extension errors
-  GET  /api/poll              {rev} ―― grows on every change; the UI refetches when it moves
-  GET  /api/tasks             tasks in progress
-  POST /api/tasks             {title}                         add a task
-  POST /api/tasks/<id>        {title?, status?}               rename / mark done
-  POST /api/send              {text, task?, agent?, quotes?, inject?}  queue a message (or inject into a running job)
+  GET  /api/info              name, version, lock, workspace and the recent ones, settings file, agents (icon: a data: URL or ""), previews, extension and settings errors
+  GET  /api/poll              {rev, reloading} ―― rev grows on every change; the UI refetches when it moves. reloading: --reload holds the queue to swap in new code
+  GET  /api/tasks?all=1       tasks in progress (all=1: done ones too), each with the state of its latest job
+  POST /api/tasks             {title, ref?}                   add a task (ref: where an app keeps it, e.g. "app/sessions/12#n3"; the shell bundles by session)
+  POST /api/tasks/<id>        {title?, status?, ref?}         rename / mark done / point at a session
+  POST /api/send              {text, task?, agent?, quotes?, inject?, first?, parallel?, ref?, confirm?}  queue a message (first: next in line; parallel: ⚡ if the task's
+                              session is busy, it becomes a new task of its own and starts now; ref: for a new task) or inject into a running job
+                              {text, quotes?, append|edit: <job id>, confirm?}  add to (append) or rewrite (edit) a message that still waits in the queue
+                              409 {error, conflict: [{job, task, title, paths}]}: another session's running job is editing a file or folder it quotes ―― the person approves, then it is sent again with confirm: true
   GET  /api/jobs?task=        the conversation (last 40 jobs)
+  GET  /api/queue             what runs and waits (running first, then queued with pos = place in its session), each with its task's title, ref and quotes [{n, label}]; text is the first line, full all of it (≤ 2,000)
   POST /api/jobs/<id>/stop    stop a queued or running job
-  GET  /api/files?path=       one folder of the workspace
+  POST /api/jobs/<id>/move    {before?}  a queued job moves just before another queued job of its session (before: its id), or last (none) ―― the order it runs in
+                              (409 once it, or one it passes, runs or ended; 400 when before is not one of its session's queued jobs)
+  POST /api/jobs/<id>/parallel  {confirm?}  ⚡ a queued job leaves its busy session for a new task of its own and starts now (409 once it runs or ended; 409 conflict as for send)
+  POST /api/config            {agent?, open_with?, workspace?}  the person's choices (shared keys only; core_locked is not one)
+  GET  /api/files?path=       one folder of the workspace (409 until a workspace is set)
   GET  /api/read?path=        one text file of the workspace
   GET  /files/<path>          raw workspace file (apps run from here)
   GET  /x/<id>/<path>         raw extension file (previews run from here)
   GET  …/aether-sdk.js        the extension SDK, next to any entry
 
 POST needs the header `X-Aether: 1` (a cross-origin page or a sandboxed frame cannot send it without a preflight we never answer).
-Files under /files and /x are served with `Content-Security-Policy: sandbox allow-scripts`, so they never run with the core's origin.
+Files under /files and /x are served with `Content-Security-Policy: sandbox allow-scripts allow-modals` (modals: print), so they never run with the core's origin.
 A sandboxed page has an opaque origin, so behind a cookie-authenticated proxy its own requests carry no cookie and fail. The core
 therefore delivers every HTML page as one document (`bundle`): relative scripts, stylesheets and images are inlined.
 """
@@ -26,19 +34,20 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
-import os
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import PROTOCOL, VERSION, extensions, files
-from .runner import Runner, compose
-from .store import Store
+from . import PROTOCOL, VERSION, extensions, files, settings
+from .runner import Runner, append, compose, quotes_of
+from .store import Store, session_of
 
 CORE = Path(__file__).resolve().parent
 STATIC = CORE / "static"
+SPARE = CORE / "fallback"   # extensions shipped with the core (claude-code, text-preview), used only for an id no other folder has
+REPO = CORE.parent
 
 
 TAG = re.compile(r"<script\b[^>]*\bsrc=\"([^\"]+)\"[^>]*>\s*</script>|<link\b[^>]*>|<img\b[^>]*>", re.I)
@@ -77,45 +86,206 @@ def bundle(html: str, find) -> str:
     return TAG.sub(swap, html)
 
 
+SHARED = ("agent", "open_with", "workspace")   # keys the shell may write. Extensions never write them (spec §2.1)
+RECENT = 10   # config `recent`: the workspaces used last, newest first. The core writes it when the workspace changes; the shell only reads it
+
+
+class Started(Exception):
+    """The message to edit has left the queue (it runs or ended): nothing was changed (409)."""
+
+
+class Conflict(Exception):
+    """Another session's running job is editing what this message quotes: nothing was sent until the person approves (409, confirm: true)."""
+
+    def __init__(self, hits: list):
+        self.hits = hits
+        super().__init__("another task is editing " + ", ".join(p for h in hits for p in h["paths"]) + " right now: approve to send anyway")
+
+
+SRC = re.compile(r"^(?:📄|📁|🧩) (.+?)/?(?: · .*)?$")   # a quote of the file tree: "📄 a/b.md · Intro", "📁 a/", "🧩 app/"
+
+
+def paths_of(prompt: str) -> set:
+    """The workspace files and folders a message quotes (what it may change)."""
+    return {m.group(1).strip("/") for q in quotes_of(prompt) if (m := SRC.match(q["label"]))}
+
+
+def overlap(a: str, b: str) -> bool:
+    """The same file, or one inside the other ("" is the whole workspace)."""
+    return a == b or not a or not b or a.startswith(b + "/") or b.startswith(a + "/")
+
+
+class NoWorkspace(LookupError):
+    """Started with no workspace (a fresh install): the shell asks for one before the file tree and agents work."""
+
+
+def check_workspace(path) -> Path:
+    """A folder the person may hand to agents: it exists, and it is not the home folder or a disk root (agents could touch everything)."""
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError("enter the path of a folder")
+    p = Path(path.strip()).expanduser()
+    if not p.is_absolute():
+        raise ValueError("use an absolute path (or ~/…)")
+    p = p.resolve()
+    if not p.is_dir():
+        raise ValueError(f"no such folder: {p}")
+    if p in (Path.home().resolve(), Path(p.anchor)):
+        raise ValueError(f"refusing {p} as the workspace (agents could touch everything). Pick a project folder")
+    return p
+
+
+def source_checkout(repo: Path = REPO) -> bool:
+    """A git clone of aether-rsi (spec/ and conformance/ beside the package), not a pip install in site-packages."""
+    return (repo / "spec").is_dir() and (repo / "conformance").is_dir() and not {"site-packages", "dist-packages"} & set(repo.parts)
+
+
+def lock_state(setting, ws, repo: Path = REPO):
+    """(locked, reason). Opening a folder that holds the core's own clone is how the person says \"I am working on the core\"."""
+    if setting is False:
+        return False, "config.json: core_locked is false"
+    if setting is True:
+        return True, "config.json: core_locked is true"
+    if ws and (ws == repo or ws in repo.parents):
+        if source_checkout(repo):
+            return False, f"the workspace contains the core ({repo.name})"
+        return True, "the core here is an installed package (open a git clone to edit it)"
+    return True, "the core is outside the workspace" if ws else "no workspace yet"
+
+
 class Core:
     def __init__(self, workspace, data):
-        self.ws = Path(workspace).expanduser().resolve()
+        """workspace: the --workspace flag or AETHER_WORKSPACE (fixed for this run), else config.json `workspace`, else None (the shell asks)."""
         self.data = Path(data).expanduser().resolve()
         self.data.mkdir(parents=True, exist_ok=True)
-        cfg = self.data / "config.json"
-        self.config = json.loads(cfg.read_text()) if cfg.is_file() else {}
-        self.locked = self.config.get("core_locked", True) is not False
-        self.protect = [CORE, self.data] if self.locked else []
+        self.cfg = self.data / "config.json"
+        self.config = json.loads(self.cfg.read_text()) if self.cfg.is_file() else {}
+        self.fixed = bool(workspace)
+        self.ws, self.ws_error = None, ""
+        try:
+            want = workspace or self.config.get("workspace")
+            self.ws = check_workspace(str(want)) if want else None
+        except ValueError as e:
+            if self.fixed:
+                raise
+            self.ws_error = f"the saved workspace is not usable: {e}"   # moved or deleted: ask again instead of failing to start
         self.store = Store(self.data / "aether.db")
+        self.settings = settings.Settings(settings.where(REPO, self.data, source_checkout()))
         self._ext, self._ext_at = None, None
-        self.runner = Runner(self.store, lambda: self.ext()["agent"], self.ws, self.protect, self.data / "logs")
+        self.runner = Runner(self.store, lambda: self.ext()["agent"], self.ws, [], self.data / "logs")
+        self.runner.env = lambda: self.settings.get()[0]["env"]
+        self.relock()
+
+    def relock(self):
+        """Locked unless the person unlocked it: config `core_locked` (true or false wins), else a workspace that contains this clone of the core."""
+        self.locked, self.lock_reason = lock_state(self.config.get("core_locked"), self.ws)
+        self.protect = [CORE, self.data, self.settings.path.resolve()] if self.locked else []   # settings.json sits beside the core: an agent must not repoint the credentials
+        self.runner.protect = [str(p) for p in self.protect]
+        self._ext_at = None   # agents without guard are enabled only while unlocked
 
     def ext(self) -> dict:
         """Rescanned when an extensions folder changes (git clone / rm -rf, then reload the page)."""
-        dirs = [self.ws / "extensions", self.data / "extensions"]
-        stamp = tuple(os.stat(d).st_mtime_ns if d.is_dir() else 0 for d in dirs)
+        s, bad = self.settings.get()
+        dirs = ([self.ws / "extensions"] if self.ws else []) + s["extensions"] + [self.data / "extensions"]   # settings.json extensions: always, whatever the workspace
+        seen = set()   # one folder twice (the workspace's own extensions/ is also in settings) would clash with itself: keep the first
+        dirs = [d for d in dirs if not (str(d.resolve()) in seen or seen.add(str(d.resolve())))]
+        stamp = (extensions.stamp([*dirs, SPARE]), tuple(bad))
         if stamp != self._ext_at:
-            self._ext, self._ext_at = extensions.scan(dirs, self.locked), stamp
+            self._ext, self._ext_at = extensions.scan(dirs, self.locked, [SPARE]), stamp
+            self._ext["errors"] = [*bad, *self._ext["errors"]]
         return self._ext
 
     def default_agent(self) -> str:
         agents = {k: a for k, a in self.ext()["agent"].items() if not a.get("disabled")}
         want = self.config.get("agent")
-        return want if want in agents else (sorted(agents)[0] if agents else "")
+        return want if want in agents else (min(agents, key=lambda k: (bool(agents[k].get("spare")), k)) if agents else "")   # the workspace's own agents before a spare
+
+    def need_ws(self) -> Path:
+        if not self.ws:
+            raise NoWorkspace("no workspace yet: set the folder in the shell first")
+        return self.ws
 
     def info(self) -> dict:
         e = self.ext()
-        return {"name": "AetherRSI", "version": VERSION, "protocol": PROTOCOL, "locked": self.locked, "workspace": self.ws.name,
+        return {"name": "AetherRSI", "version": VERSION, "protocol": PROTOCOL, "locked": self.locked, "lock_reason": self.lock_reason,
+                "workspace": self.ws.name if self.ws else "", "workspace_path": str(self.ws or ""),
+                "workspace_fixed": self.fixed, "workspace_error": self.ws_error,
+                "settings": str(self.settings.path) if self.settings.path.is_file() else "",
+                "recent": [p for p in self.config.get("recent") or [] if isinstance(p, str) and Path(p).is_dir()],   # moved or deleted ones drop out of the list, not out of the file
                 "agent": self.default_agent(),
-                "agents": [{"id": a["id"], "label": a["label"], "inject": bool(a.get("inject")), "disabled": a.get("disabled", "")}
+                "agents": [{"id": a["id"], "label": a["label"], "icon": extensions.icon_url(a), "inject": bool(a.get("inject")), "disabled": a.get("disabled", ""), "spare": bool(a.get("spare"))}
                            for a in e["agent"].values()],
-                "previews": [{"id": p["id"], "label": p["label"], "match": p["match"], "entry": p["entry"]} for p in e["preview"].values()],
-                "errors": e["errors"]}
+                "previews": [{"id": p["id"], "label": p["label"], "match": p["match"], "entry": p["entry"], "binary": bool(p.get("binary")), "spare": bool(p.get("spare"))}
+                             for p in e["preview"].values()],
+                "open_with": self.config.get("open_with") or {}, "errors": e["errors"]}
+
+    def set_config(self, b: dict) -> dict:
+        """The person picks the default agent or which preview opens a file type. Other keys are refused, so the lock stays put."""
+        bad = sorted(set(b) - set(SHARED))
+        if bad:
+            raise ValueError(f"not a setting the shell may change: {', '.join(bad)}")
+        if "workspace" in b:
+            if self.fixed:
+                raise ValueError("the workspace was given at start (--workspace / AETHER_WORKSPACE); restart without it to change it here")
+            ws = check_workspace(b["workspace"])
+            was = [self.config.get("workspace") or "", *(self.config.get("recent") or [])]   # the folder left keeps its place right after the new one
+            self.config["recent"] = list(dict.fromkeys(p for p in [str(ws), *was] if isinstance(p, str) and p))[:RECENT]
+            self.config["workspace"] = str(ws)
+            self.ws = self.runner.ws = ws
+            self.ws_error, self._ext_at = "", None   # rescan: the new folder has its own extensions/
+            self.relock()
+        if "agent" in b:
+            if b["agent"] not in self.ext()["agent"]:
+                raise ValueError(f"no agent {b['agent']!r}")
+            self.config["agent"] = b["agent"]
+        if "open_with" in b:
+            ow, previews = b["open_with"], self.ext()["preview"]
+            if not isinstance(ow, dict):
+                raise ValueError('open_with must be {".ext": "preview id" or null}')
+            cur = dict(self.config.get("open_with") or {})
+            for ext, pid in ow.items():
+                if not (isinstance(ext, str) and ext.startswith(".")):
+                    raise ValueError(f"not a file type: {ext!r}")
+                if pid is None:
+                    cur.pop(ext.lower(), None)
+                elif pid in previews and (ext.lower() in previews[pid]["match"] or "*" in previews[pid]["match"]
+                                          and not any(ext.lower() in p["match"] for p in previews.values())):   # "*" only where nobody else opens
+                    cur[ext.lower()] = pid
+                else:
+                    raise ValueError(f"no preview {pid!r} for {ext}")
+            self.config["open_with"] = cur
+        tmp = self.cfg.with_suffix(".tmp")
+        tmp.write_text(json.dumps(self.config, ensure_ascii=False, indent=2))
+        tmp.replace(self.cfg)
+        return {k: self.config.get(k) for k in SHARED}
+
+    def conflicts(self, prompt: str, sess: str) -> list:
+        """The running jobs of other sessions that quote a file or folder this prompt quotes: a task is editing it now.
+        The same session never runs two at once, so only another session can be in the way."""
+        mine = paths_of(prompt)
+        out = []
+        for j in self.store.running() if mine else []:
+            if session_of(j["ref"], j["task"]) == sess:
+                continue
+            hit = sorted(p for p in paths_of(j["prompt"]) if any(overlap(p, m) for m in mine))
+            if hit:
+                out.append({"job": j["id"], "task": j["task"], "title": j["title"], "paths": hit})
+        return out
+
+    def check(self, prompt: str, task, ref: str = "", confirm=False):
+        if confirm is True:
+            return
+        t = self.store.task(task) if task else None
+        hits = self.conflicts(prompt, session_of(t["ref"] if t else ref, t["id"] if t else "(new)"))
+        if hits:
+            raise Conflict(hits)
 
     def send(self, b: dict) -> dict:
         text = str(b.get("text") or "").strip()
         if not text:
             raise ValueError("nothing to send")
+        for how in ("append", "edit"):
+            if b.get(how):
+                return self.rewrite(how, str(b[how]), text, b.get("quotes"), b.get("confirm"))
         if b.get("inject"):
             j = self.store.job(str(b["inject"]))
             if not j:
@@ -125,6 +295,7 @@ class Core:
             nj = self.store.add_job(j["task"], text, text, j["agent"], first=True)   # too late: next in the same conversation
             self.runner.wake.set()
             return {"injected": False, "job": nj["id"], "note": "the job had ended; queued next in the same conversation"}
+        self.need_ws()
         agent = str(b.get("agent") or "") or self.default_agent()
         a = self.ext()["agent"].get(agent)
         if not a:
@@ -134,10 +305,82 @@ class Core:
         task = self.store.task(str(b.get("task") or ""))
         if b.get("task") and not task:
             raise ValueError("no such task")
-        task = task or self.store.add_task(text.splitlines()[0])
-        j = self.store.add_job(task["id"], text, compose(text, b.get("quotes")), agent)
+        first, par = bool(b.get("first")), bool(b.get("parallel"))
+        if first and par:
+            raise ValueError("priority send or parallel send, not both")
+        prompt = compose(text, b.get("quotes"))
+        if par and task and self.busy(task):   # ⚡ parallel send: rather than wait behind its session's task, a new task (a session of its own) that starts now
+            self.check(prompt, None, confirm=b.get("confirm"))   # every running job counts then, the busy session's included
+            t = self.store.add_task(text.splitlines()[0])
+            j = self.store.add_job(t["id"], text, prompt, agent)
+            self.runner.wake.set()
+            return {"job": j["id"], "task": t, "parallel": True}
+        self.check(prompt, task and task["id"], str(b.get("ref") or ""), b.get("confirm"))
+        task = task or self.store.add_task(text.splitlines()[0], str(b.get("ref") or ""))   # no task: a new one ―― a parallel send is that already
+        j = self.store.add_job(task["id"], text, prompt, agent, first=first)
         self.runner.wake.set()
         return {"job": j["id"], "task": task}
+
+    def busy(self, task: dict) -> bool:
+        """Its session runs or queues a job, so a message sent there would wait (one task per session)."""
+        s = session_of(task["ref"], task["id"])
+        return any(session_of(q["ref"], q["task"]) == s for q in self.store.queue())
+
+    def move(self, jid: str, before=None) -> dict:
+        """Drag a waiting message up or down in its session (📋 Tasks): it runs in the new order. Other sessions run beside it anyway, so
+        only the order inside a session means anything."""
+        if not self.store.job(jid):
+            raise LookupError("no such job")
+        if before is not None and not isinstance(before, str):
+            raise ValueError("before must be a job id")
+        if not self.store.move_queued(jid, before):
+            raise Started("it, or one it passes, has started: nothing was changed")
+        return {"job": jid, "pos": self.store.queued_before(jid) + 1}
+
+    def parallel(self, jid: str, confirm=False) -> dict:
+        """⚡ Parallel send of a waiting message. It waits only because its session runs another task (one task per session), so it
+        moves to a new task ―― a session of its own ―― and starts now, beside that one. The conflict check sees every running job
+        then, its old session's included."""
+        j = self.store.job(jid)
+        if not j:
+            raise LookupError("no such job")
+        if j["state"] != "queued":
+            raise Started(f"it {'is running' if j['state'] == 'running' else 'has ended'}: nothing was changed")
+        if not self.store.queued_before(jid) and not any(session_of(r["ref"], r["task"]) == session_of((self.store.task(j["task"]) or {}).get("ref", ""), j["task"])
+                                                          for r in self.store.running()):
+            return {"job": jid, "task": self.store.task(j["task"]), "note": "its session is free: it starts now as it is"}
+        self.check(j["prompt"], None, confirm=confirm)
+        t = self.store.add_task(j["text"].strip().splitlines()[0] if j["text"].strip() else "Untitled")
+        if not self.store.move_job(jid, t["id"]):   # it started meanwhile
+            self.store.update_task(t["id"], status="done")
+            raise Started("it started meanwhile: nothing was changed")
+        self.runner.wake.set()
+        return {"job": jid, "task": t}
+
+    def rewrite(self, how: str, jid: str, text: str, quotes, confirm=False) -> dict:
+        """➕ append to / ✎ edit a message that still waits in the queue (it keeps its place). Once it has started, an append goes in
+        like an inject (next in the same conversation when it ended); an edit changes nothing (Started) ―― the shell keeps the text."""
+        for _ in range(3):   # another edit, or the start, may come between the read and the write: read again
+            j = self.store.job(jid)
+            if not j:
+                raise LookupError("no such job")
+            if j["state"] != "queued":
+                break
+            new = append(j["text"], j["prompt"], text, quotes) if how == "append" else (text, compose(text, quotes))
+            self.check(compose(text, quotes), j["task"], confirm=confirm)   # what this send adds (the message's own quotes were checked when it was sent)
+            if self.store.edit_job(jid, *new, was=(j["text"], j["prompt"])):
+                t, first = self.store.task(j["task"]), j["text"].strip().splitlines()[0]
+                if how == "edit" and t and t["title"] == (first.strip()[:80] or "Untitled"):   # the task was named after this message: follow it
+                    self.store.update_task(t["id"], title=new[0].splitlines()[0])
+                return {"job": jid, how: True}
+        if how == "edit":
+            raise Started(f"it {'is running' if j['state'] == 'running' else 'has ended'}: nothing was changed (your text stays in ③)")
+        prompt = compose(text, quotes)
+        if self.runner.inject(jid, prompt):
+            return {"job": jid, "injected": True, "note": "it had started: injected into the running conversation"}
+        nj = self.store.add_job(j["task"], text, prompt, j["agent"], first=True)
+        self.runner.wake.set()
+        return {"job": nj["id"], "injected": False, "note": "it had ended: queued next in the same conversation"}
 
 
 def handler(core: Core):
@@ -154,7 +397,7 @@ def handler(core: Core):
             self.send_header("Cache-Control", "no-store")
             self.send_header("X-Content-Type-Options", "nosniff")
             if sandbox:
-                self.send_header("Content-Security-Policy", "sandbox allow-scripts")
+                self.send_header("Content-Security-Policy", "sandbox allow-scripts allow-modals")
             self.end_headers()
             self.wfile.write(body)
 
@@ -190,7 +433,8 @@ def handler(core: Core):
                 if path.startswith("/static/"):
                     return self._file(files.resolve(STATIC, path[len("/static/"):]), False)
                 if path.startswith("/files/"):
-                    return self._file(files.resolve(core.ws, path[len("/files/"):], core.protect), True, core.ws, core.protect)
+                    ws = core.need_ws()
+                    return self._file(files.resolve(ws, path[len("/files/"):], core.protect), True, ws, core.protect)
                 if path.startswith("/x/"):
                     xid, _, rest = path[3:].partition("/")
                     p = core.ext()["preview"].get(xid)
@@ -200,9 +444,14 @@ def handler(core: Core):
                 if path == "/api/info":
                     return self._json(core.info())
                 if path == "/api/poll":
-                    return self._json({"rev": core.store.rev()})
+                    return self._json({"rev": core.store.rev(), "reloading": core.runner.hold})
                 if path == "/api/tasks":
-                    return self._json(core.store.tasks())
+                    return self._json(core.store.tasks(None if q.get("all") else "doing"))
+                if path == "/api/queue":
+                    q = core.store.queue()
+                    for j in q:
+                        j["quotes"] = quotes_of(j.pop("prompt"))   # the labels only: a quote's text can be long
+                    return self._json(q)
                 if path == "/api/jobs":
                     jobs = core.store.jobs(q.get("task") or None)
                     for j in jobs:
@@ -210,10 +459,12 @@ def handler(core: Core):
                             j["pos"] = core.store.queued_before(j["id"]) + 1
                     return self._json({"jobs": jobs, "task": core.store.task(q.get("task") or "")})
                 if path == "/api/files":
-                    return self._json(files.listing(core.ws, q.get("path", ""), core.protect))
+                    return self._json(files.listing(core.need_ws(), q.get("path", ""), core.protect))
                 if path == "/api/read":
-                    return self._json({"path": q.get("path", ""), "text": files.read(core.ws, q.get("path", ""), core.protect)})
+                    return self._json({"path": q.get("path", ""), "text": files.read(core.need_ws(), q.get("path", ""), core.protect)})
                 return self._json({"error": "not found"}, 404)
+            except NoWorkspace as e:
+                return self._json({"error": str(e)}, 409)
             except files.Outside as e:
                 return self._json({"error": str(e)}, 403)
             except FileNotFoundError:
@@ -232,16 +483,26 @@ def handler(core: Core):
                     raise ValueError("body must be an object")
                 if path == "/api/send":
                     return self._json(core.send(b))
+                if path == "/api/config":
+                    return self._json(core.set_config(b))
                 if path == "/api/tasks":
-                    return self._json(core.store.add_task(str(b.get("title") or "")))
+                    return self._json(core.store.add_task(str(b.get("title") or ""), b.get("ref") or ""))
                 if path.startswith("/api/tasks/"):
                     tid = path.rsplit("/", 1)[1]
                     if not core.store.task(tid):
                         return self._json({"error": "no such task"}, 404)
-                    return self._json(core.store.update_task(tid, b.get("title"), b.get("status")))
+                    return self._json(core.store.update_task(tid, b.get("title"), b.get("status"), b.get("ref")))
                 if path.startswith("/api/jobs/") and path.endswith("/stop"):
                     return self._json({"state": core.runner.stop(path.split("/")[3])})
+                if path.startswith("/api/jobs/") and path.endswith("/move"):
+                    return self._json(core.move(path.split("/")[3], b.get("before") or None))
+                if path.startswith("/api/jobs/") and path.endswith("/parallel"):
+                    return self._json(core.parallel(path.split("/")[3], b.get("confirm")))
                 return self._json({"error": "not found"}, 404)
+            except Conflict as e:
+                return self._json({"error": str(e), "conflict": e.hits}, 409)
+            except (NoWorkspace, Started) as e:
+                return self._json({"error": str(e)}, 409)
             except LookupError as e:
                 return self._json({"error": str(e)}, 404)
             except ValueError as e:
