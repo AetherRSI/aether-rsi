@@ -246,6 +246,61 @@ class Api(unittest.TestCase):
         threading.Thread(target=r.loop, daemon=True).start()
         self.assertTrue(store.asked.wait(3), "the loop died on the first locked read")
 
+    def test_a_step_line_that_cannot_be_written_does_not_end_the_job(self):
+        """add_line / set_session locked for good: the lines are skipped, the agent runs to its end and the job is done (it failed, 2026-10-23)."""
+        import sqlite3
+        live = Live()
+        try:
+            def locked(*a, **kw):
+                raise sqlite3.OperationalError("database is locked")
+            live.srv.core.store.add_line = live.srv.core.store.set_session = locked
+            _, r = live.json("api/send", {"text": "steps lost", "agent": "echo-agent"})
+            j = live.wait_job(r["job"], limit=30)
+            self.assertEqual((j["state"], j["lines"]), ("done", []))
+        finally:
+            live.close()
+
+    def test_a_reader_that_breaks_stops_its_agent(self):
+        """The core stops reading (an exception in the reader): the agent is stopped too and the job fails, not an orphan that runs on."""
+        live = Live()
+        try:
+            runner, pids = live.srv.core.runner, []
+            kill = runner._kill
+            runner._kill = lambda pid: (pids.append(pid), kill(pid))
+
+            def broken(*a):
+                raise RuntimeError("reader broke")
+            runner._event = broken
+            _, r = live.json("api/send", {"text": "/slow orphan", "agent": "echo-agent"})
+            j = live.wait_job(r["job"])
+            self.assertEqual(j["state"], "failed")
+            self.assertIn("stopped reading", j["error"])
+            self.assertEqual(len(pids), 1)
+            with self.assertRaises(ProcessLookupError):   # reaped: not running on
+                os.kill(pids[0], 0)
+        finally:
+            live.close()
+
+    def test_the_last_state_is_written_through_a_locked_store(self):
+        """again(): a locked write is asked again, other errors are not."""
+        import sqlite3
+        from aether import runner as rn
+        calls = []
+
+        def flaky(x):
+            calls.append(x)
+            if len(calls) < 3:
+                raise sqlite3.OperationalError("database is locked")
+            return x
+        sleep, rn.time.sleep = rn.time.sleep, lambda s: None
+        try:
+            self.assertEqual(rn.again(flaky, "ok"), "ok")
+            self.assertEqual(len(calls), 3)
+            with self.assertRaises(sqlite3.OperationalError):
+                rn.again(lambda: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")), tries=2)
+        finally:
+            rn.time.sleep = sleep
+
     def test_a_running_task_shows_running_and_counts_its_queue(self):
         """One job runs and the next of the same task waits: the task says running (not queued) and 1 queued."""
         _, r = self.live.json("api/send", {"text": "/slow first", "agent": "echo-agent"})

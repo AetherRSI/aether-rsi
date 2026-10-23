@@ -10,6 +10,7 @@ import os
 import re
 import select
 import signal
+import sqlite3
 import subprocess
 import sys
 import threading
@@ -64,6 +65,18 @@ def append(old_text: str, old_prompt: str, text: str, quotes) -> tuple:
     return new_text, new_text + (QUOTED + "\n\n".join(blocks) if blocks else "")
 
 
+def again(write, *a, tries: int = 5, **kw):
+    """A store write that has to land (a job's last state): a locked store is asked again rather than leaving a running row with no
+    process behind it, or a failed one whose agent runs on (2026-10-23)."""
+    for i in range(tries):
+        try:
+            return write(*a, **kw)
+        except sqlite3.OperationalError:
+            if i == tries - 1:
+                raise
+            time.sleep(1 + i)
+
+
 def command(agent: dict) -> list:
     return [a.replace("{dir}", agent["dir"]).replace("{python}", sys.executable) for a in agent["command"]]
 
@@ -108,7 +121,10 @@ class Runner:
         try:
             (go or self.run)(job)
         except Exception as e:  # noqa: BLE001 ―― one broken job must not stop the queue
-            self.store.set_job(job["id"], state="failed", error=repr(e)[:500], ended=time.time())
+            h = self.live.pop(job["id"], None)
+            if h:   # its agent is up but nobody reads it any more: stop it rather than let it run on unseen
+                self._kill(h["pid"])
+            again(self.store.set_job, job["id"], state="failed", error=repr(e)[:500], ended=time.time())
         finally:
             self.launching.discard(job["id"])
             if not self.handing:   # handed over: the next process owns it now
@@ -145,8 +161,18 @@ class Runner:
         self.follow(jid, h)
 
     def follow(self, jid: str, h: dict):
-        """Read the agent's JSON lines until it ends, then settle the job. Reads only while holding rlock, so a swap that holds every
-        rlock knows no line is half handled; it then hands over `buf` (the bytes read but not yet a whole line)."""
+        """Read the agent's JSON lines until it ends, then settle the job. Should the reading break, the agent is stopped and the job
+        settles as failed: a job the core gave up on must not leave its agent running (2026-10-23)."""
+        try:
+            self._read(jid, h)
+        except Exception as e:  # noqa: BLE001
+            h["error"] = h["error"] or f"the core stopped reading the agent: {e!r}"[:500]
+            self._kill(h["pid"])
+        self._settle(jid, h)
+
+    def _read(self, jid: str, h: dict):
+        """Reads only while holding rlock, so a swap that holds every rlock knows no line is half handled; it then hands over `buf`
+        (the bytes read but not yet a whole line)."""
         while True:
             if self.handing:   # a swap is taking it over: the next process reads on from here (or, if the swap fails, this one)
                 time.sleep(0.05)
@@ -163,6 +189,8 @@ class Runner:
                 *lines, h["buf"] = h["buf"].split(b"\n")
                 for raw in lines:
                     self._event(jid, h, raw)
+
+    def _settle(self, jid: str, h: dict):
         code = h["wait"]()
         with h["lock"]:
             h["open"] = False
@@ -174,16 +202,16 @@ class Runner:
             pass
         if jid in self.stopping:
             self.stopping.discard(jid)
-            self.store.set_job(jid, state="stopped", ended=time.time())
+            again(self.store.set_job, jid, state="stopped", ended=time.time())
             return
         done, error = h["done"], h["error"]
         if done and not error:
             cost = done.get("cost")
-            self.store.set_job(jid, state="done", reply=str(done.get("reply") or ""), ended=time.time(),
-                               cost=float(cost) if isinstance(cost, (int, float)) else None)
+            again(self.store.set_job, jid, state="done", reply=str(done.get("reply") or ""), error="", ended=time.time(),
+                  cost=float(cost) if isinstance(cost, (int, float)) else None)
         else:
             tail = (self.logs / f"{jid}.err").read_text(errors="replace")[-300:] if (self.logs / f"{jid}.err").is_file() else ""
-            self.store.set_job(jid, state="failed", error=error or tail or f"the agent exited ({code}) without done", ended=time.time())
+            again(self.store.set_job, jid, state="failed", error=error or tail or f"the agent exited ({code}) without done", ended=time.time())
 
     def _event(self, jid: str, h: dict, raw: bytes):
         try:
@@ -193,9 +221,9 @@ class Runner:
         if not isinstance(ev, dict):
             return
         if ev.get("step"):
-            self.store.add_line(jid, str(ev["step"])[:300], str(ev["full"]) if ev.get("full") else None)   # full: the step's whole text (optional)
+            self._note(self.store.add_line, jid, str(ev["step"])[:300], str(ev["full"]) if ev.get("full") else None)   # full: the step's whole text (optional)
         if ev.get("session"):
-            self.store.set_session(h["task"], h["agent"], str(ev["session"]))
+            self._note(self.store.set_session, h["task"], h["agent"], str(ev["session"]))
         if ev.get("error"):
             h["error"] = str(ev["error"])[:500]
         if ev.get("done"):
@@ -203,6 +231,14 @@ class Runner:
             with h["lock"]:   # the agent has answered: no more injects
                 h["open"] = False
                 self._close_in(h)
+
+    @staticmethod
+    def _note(write, *a):
+        """A step line or the session id: one that cannot be written is skipped, the job goes on (it was the whole job, 2026-10-23)."""
+        try:
+            again(write, *a, tries=2)
+        except sqlite3.Error as e:
+            print(f"[job] could not write to the store, skipping it: {e!r}", file=sys.stderr, flush=True)
 
     @staticmethod
     def _close_in(h):
