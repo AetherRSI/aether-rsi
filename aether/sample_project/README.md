@@ -9,8 +9,8 @@ A workspace made by `aether init` (or the first `aether` start). 📂 Files show
 | Folder | What is in it |
 |:--|:--|
 | `apps/hello-app/` | An app: `aether.json` (kind `app`) + `index.html` + `data.json` + `CLAUDE.md` (the agent's rules for it) |
-| `extensions/preview/` | Previews: Markdown (with mermaid), JSON, PowerPoint, images/audio/video. Plain text comes with the core |
-| `extensions/agent/` | Echo (demo). Claude Code comes with the core |
+| `extensions/preview/json-preview/` | A preview: JSON as a tree. Plain text comes with the core |
+| `extensions/agent/echo-agent/` | An agent: Echo (demo). Claude Code comes with the core |
+| `samples/` | One file per preview feature, to try the previews (see `samples/README.md`) |
 
-Add an extension by putting its folder under `extensions/<kind>/` and reloading the page. `mermaid.min.js` (in
-`extensions/preview/md-preview/`) is mermaid, MIT License, © Knut Sveidqvist and contributors.
+Add an extension by putting its folder under `extensions/<kind>/` and reloading the page; the two above are the samples to copy.

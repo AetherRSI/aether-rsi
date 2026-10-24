@@ -30,11 +30,14 @@ body { display: grid; grid-template-rows: auto 1fr auto auto; grid-template-colu
 #wslist em { flex: none; font-style: normal; font-size: 11px; color: #0b2a7a; }
 .wsrow { display: flex; justify-content: flex-end; gap: 8px; }
 #oklist { margin: 8px 0 12px; padding-left: 18px; font-size: 13px; color: #1d2433; }
+#deplist { margin: 0 0 12px; padding-left: 18px; font-size: 12px; color: #1d2433; max-height: 40vh; overflow: auto; }
+#deplist li { margin: 3px 0; overflow-wrap: anywhere; } #deplist code { font: 12px ui-monospace, Menlo, monospace; background: #f2f5fb; border-radius: 4px; padding: 0 4px; } #deplist small { color: #667; }
+#deptake { display: inline-flex; align-items: center; gap: 4px; } #deptake .mui { width: 16px; height: 16px; }
 #oklist li { margin: 2px 0; } #oklist code { font: 12px ui-monospace, Menlo, monospace; background: #f2f5fb; border-radius: 4px; padding: 0 4px; }
 #oklist .okq { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; padding: 2px 10px 2px 7px; border: 1px solid #0b2a7a; border-radius: 8px; background: #fff; color: #0b2a7a; font: inherit; font-size: 12px; cursor: pointer; vertical-align: middle; }
 #oklist .okq:hover, #oklist .okq:focus-visible { background: #eef2fb; } #oklist .okq .mui { width: 16px; height: 16px; }
 .wsrow button { font: inherit; padding: 6px 16px; border-radius: 8px; border: 1px solid #d5dae6; background: #fff; cursor: pointer; }
-#wsok, #okyes { background: #0b2a7a; border-color: #0b2a7a; color: #fff; }
+#wsok, #okyes, #deptake { background: #0b2a7a; border-color: #0b2a7a; color: #fff; }
 #wsok:disabled { opacity: .5; cursor: default; }
 #main { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr); min-height: 0; }
 #log { overflow: auto; padding: 12px 16px; display: flex; flex-direction: column; gap: 10px; }
@@ -369,6 +372,7 @@ td.c-act button:hover { background: #eef2fb; }
 .fmenu[hidden] { display: none; }
 .facts .fmenu button { border: 0; text-align: left; white-space: nowrap; display: flex; flex-direction: column; }
 .fmenu small { font-size: 11px; color: #7a8294; white-space: normal; max-width: 240px; }
+.fmenu.fzipm { width: 320px; } .fzipm small { max-width: none; }   /* ⬇ ▾: what is left out reads on two lines, not ten */
 .fmhead { font-size: 11px; color: #7a8294; padding: 6px 10px 2px; } .fmhead:not(:first-child) { border-top: 1px solid #eceff5; margin-top: 4px; }
 .fsel { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: #5b6476; }
 .fsel select { font: inherit; font-size: 13px; color: #1f2937; border: 1px solid #d5dae6; border-radius: 6px; padding: 2px 4px; background: #fff; max-width: 160px; }

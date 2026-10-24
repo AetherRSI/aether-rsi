@@ -1,8 +1,0 @@
-{
-  "aether": "0.1",
-  "kind": "preview",
-  "id": "md-preview",
-  "label": "Markdown",
-  "match": [".md", ".markdown"],
-  "entry": "index.html"
-}

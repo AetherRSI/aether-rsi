@@ -70,6 +70,14 @@
     <div class="wsrow"><button type="button" id="wscancel">Cancel</button><button type="submit" id="wsok">Use this folder</button></div>
   </form>
 </dialog>
+<dialog id="depdlg" class="dlg" aria-labelledby="depdlg-h">
+  <form method="dialog">
+    <h2 id="depdlg-h">⚠ It uses files outside its folder</h2>
+    <p id="depwhat"></p>
+    <ul id="deplist"></ul>
+    <div class="wsrow"><button value="no" id="depno">Cancel</button><button value="dl" id="depdl">Download anyway</button><button value="take" id="deptake">📥 Bring them in</button></div>
+  </form>
+</dialog>
 <dialog id="okdlg" class="dlg" aria-labelledby="okdlg-h">
   <form method="dialog">
     <h2 id="okdlg-h">⚠ Another task is editing this now</h2>

@@ -2,6 +2,7 @@
 
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -20,7 +21,7 @@ class Init(unittest.TestCase):
 
     def test_sample_passes_check(self):
         roots = [m.SAMPLE / "apps" / "hello-app", *sorted((m.SAMPLE / "extensions").glob("*/*"))]
-        self.assertGreaterEqual(len(roots), 4)
+        self.assertEqual([d.name for d in roots], ["hello-app", "echo-agent", "json-preview"])
         for d in roots:
             self.assertEqual(extensions.check(str(d))[1], [], d)
 
@@ -51,6 +52,18 @@ class Init(unittest.TestCase):
         (self.data / "config.json").write_text(json.dumps({"agent": "echo-agent"}))
         m.init([str(self.tmp / "P"), "--data", str(self.data)])
         self.assertEqual(json.loads((self.data / "config.json").read_text())["agent"], "echo-agent")
+
+    def test_a_taken_port_is_one_line(self):
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            s.listen()
+            port = s.getsockname()[1]
+            r = subprocess.run([sys.executable, "-m", "aether", "--port", str(port), "--workspace", str(self.tmp), "--data", str(self.data)],
+                               capture_output=True, text=True, timeout=60, env=dict(os.environ, PYTHONPATH=str(REPO)))
+        self.assertEqual(r.returncode, 2)
+        self.assertIn(f"port {port}", r.stderr)
+        self.assertIn("--port", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
 
     def test_no_question_without_a_terminal(self):
         env = dict(os.environ, AETHER_DATA=str(self.data))

@@ -23,36 +23,38 @@ MACHINE_EXT = _settings.Settings(_settings.where(REPO, _DATA, source_checkout())
 os.environ["AETHER_SETTINGS"] = str(Path(tempfile.mkdtemp(prefix="aether-settings-")) / "settings.json")   # no file: the cores under test never read this machine's settings.json
 
 
-HELLO = REPO / "samples/hello-app"   # shipped with the repo, next to the preview test files in samples/
+SAMPLE_PROJECT = REPO / "aether/sample_project"   # what `aether init` copies out: apps/hello-app, the sample extensions, samples/
 
 
 def samples():
-    """A throwaway workspace with the sample extensions (echo-agent, the previews) and this repo's samples/hello-app.
-    The extensions are copied from where they live: AETHER_SAMPLES, else the workspace saved in the data folder's
-    config.json, else the folder holding an extensions/ listed in this machine's settings.json.
-    Copied so the tests do not depend on how the real folders are laid out (extensions/ may be a link or not) and the core
-    stays locked (the real workspace may contain the core). None when nothing has them."""
-    if not (HELLO / "aether.json").is_file():
+    """A throwaway copy of this repo's sample project (echo-agent, json-preview, apps/hello-app and the preview test files in
+    samples/). Copied so the tests never write into the repo and the core stays locked. None when the checkout has none."""
+    if not (SAMPLE_PROJECT / "extensions/agent/echo-agent/aether.json").is_file():
         return None
+    ws = Path(tempfile.mkdtemp(prefix="aether-samples-"))
+    atexit.register(shutil.rmtree, ws, True)
+    shutil.copytree(SAMPLE_PROJECT, ws, dirs_exist_ok=True, ignore=shutil.ignore_patterns("__pycache__", ".*"))
+    return ws
+
+
+def private_extensions():
+    """The extensions/ folder outside this repo that holds the non-sample extensions (gemini-argon …): AETHER_SAMPLES, else the
+    workspace saved in the data folder's config.json, else the folder holding an extensions/ listed in this machine's settings.json.
+    None when nothing has them."""
     try:
         saved = json.loads((_DATA / "config.json").read_text()).get("workspace")
     except (OSError, ValueError):
         saved = None
     for c in (os.environ.get("AETHER_SAMPLES"), saved, *(e.parent for e in MACHINE_EXT if e.name == "extensions")):
-        if not (c and (Path(c) / "extensions/agent/echo-agent/aether.json").is_file()):
-            continue
-        ext = (Path(c) / "extensions").resolve()
-        ws = Path(tempfile.mkdtemp(prefix="aether-samples-"))
-        atexit.register(shutil.rmtree, ws, True)
-        skip = shutil.ignore_patterns("__pycache__", ".*")
-        shutil.copytree(ext, ws / "extensions", ignore=skip)
-        shutil.copytree(HELLO, ws / "samples/hello-app", ignore=skip)
-        return ws
+        if c and (Path(c) / "extensions/agent/gemini-argon/aether.json").is_file():
+            return (Path(c) / "extensions").resolve()
     return None
 
 
 SAMPLES = samples()
-NO_SAMPLES = "no workspace with the sample extensions (set AETHER_SAMPLES)"
+PRIVATE = private_extensions()
+NO_SAMPLES = "this checkout has no aether/sample_project"
+NO_PRIVATE = "no extensions/ with gemini-argon (set AETHER_SAMPLES)"
 
 
 def free_port() -> int:

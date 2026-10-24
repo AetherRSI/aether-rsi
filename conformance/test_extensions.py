@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from conformance.helpers import NO_SAMPLES, SAMPLES, Live
+from conformance.helpers import NO_PRIVATE, NO_SAMPLES, PRIVATE, SAMPLES, Live
 from aether import extensions
 
 
@@ -25,9 +25,9 @@ OK = {"aether": "0.1", "kind": "preview", "id": "x", "label": "X", "match": [".x
 @unittest.skipUnless(SAMPLES, NO_SAMPLES)
 class Samples(unittest.TestCase):
     def test_every_sample_conforms(self):
-        folders = [*sorted((SAMPLES / "extensions").glob("*/*/aether.json")), SAMPLES / "samples/hello-app/aether.json"]
+        folders = [*sorted((SAMPLES / "extensions").glob("*/*/aether.json")), SAMPLES / "apps/hello-app/aether.json"]
         folders = [f.parent for f in folders]
-        self.assertGreaterEqual(len(folders), 6)
+        self.assertEqual([f.name for f in folders], ["echo-agent", "json-preview", "hello-app"])
         for f in folders[:-1]:
             self.assertEqual(json.loads((f / "aether.json").read_text())["kind"], f.parent.name, f)   # preview/x, agent/x
         for f in folders:
@@ -279,13 +279,13 @@ class TwoAuthors(unittest.TestCase):
         self.assertEqual(code, 403)
 
 
-@unittest.skipUnless(SAMPLES, NO_SAMPLES)
+@unittest.skipUnless(PRIVATE, NO_PRIVATE)
 class GeminiArgon(unittest.TestCase):
     """gemini-argon/agent.py retries transient fetch failed errors with --resume and configures retryFetchErrors / ipv4first."""
 
     def test_settings_and_env_helpers(self):
         import importlib.util
-        ag_path = SAMPLES / "extensions/agent/gemini-argon/agent.py"
+        ag_path = PRIVATE / "agent/gemini-argon/agent.py"
         spec = importlib.util.spec_from_file_location("gemini_argon_agent", ag_path)
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
@@ -303,7 +303,7 @@ class GeminiArgon(unittest.TestCase):
     def test_auto_resumes_on_fetch_failed(self):
         import subprocess
         import sys
-        ag_path = SAMPLES / "extensions/agent/gemini-argon/agent.py"
+        ag_path = PRIVATE / "agent/gemini-argon/agent.py"
         tmp = Path(tempfile.mkdtemp())
         state_file = tmp / "count.txt"
         args_log = tmp / "args.jsonl"
@@ -348,7 +348,7 @@ class GeminiArgon(unittest.TestCase):
         """A fake gemini that fails its first run with first_failure on stderr, then succeeds. → (events, argv of each run)"""
         import subprocess
         import sys
-        ag_path = SAMPLES / "extensions/agent/gemini-argon/agent.py"
+        ag_path = PRIVATE / "agent/gemini-argon/agent.py"
         tmp = Path(tempfile.mkdtemp())
         state_file, args_log, fake = tmp / "count.txt", tmp / "args.jsonl", tmp / "fake_gemini.py"
         fake.write_text(

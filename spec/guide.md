@@ -129,7 +129,7 @@ as for the person; no chains, 20 sends per job). 🖱 **The screen** (spec §4.4
 ```
 
 The person uses `index.html` (it reads its own files with `aether.read("data.json")`); quote the folder and send, and the agent
-is told to read `CLAUDE.md` first. See the `samples/hello-app/` sample.
+is told to read `CLAUDE.md` first. See the `aether/sample_project/apps/hello-app/` sample.
 An app may give `"url": "http://127.0.0.1:<port>/"` instead of `entry` when a program on this machine serves its page (e.g. robosim-live's `live.py` on :8770):
 clicking the folder opens that page in its own origin (through a relay the shell asks first, because the page would share AetherRSI's origin).
 

@@ -34,6 +34,14 @@ def _inside(base: Path, rel) -> bool:
     return p.is_file() and base.resolve() in p.parents
 
 
+def _rel(rel) -> bool:
+    """A path inside the folder, written relative to it (it need not exist yet: runs/ appears with the first run)."""
+    if not isinstance(rel, str) or not rel.strip() or rel.startswith("/") or "\\" in rel or "\x00" in rel:
+        return False
+    parts = [x for x in rel.split("/") if x not in ("", ".")]
+    return bool(parts) and ".." not in parts
+
+
 LOOPBACK = re.compile(r"^https?://(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?(/\S*)?$")
 
 
@@ -86,6 +94,8 @@ def check(folder) -> tuple:
         bad.append("ports must be a list of port numbers (1-65535)")
     if kind == "app" and "agent_rules" in m and not _inside(folder, m["agent_rules"]):
         bad.append("agent_rules must be a file inside the folder")
+    if kind == "app" and "history" in m and not (isinstance(m["history"], list) and all(_rel(x) for x in m["history"])):
+        bad.append("history must be a list of paths inside the folder (its past data: runs, results, logs)")
     if "icon" in m and not (_inside(folder, m["icon"]) and Path(m["icon"]).suffix.lower() in ICON and (folder / m["icon"]).stat().st_size <= ICON_MAX):
         bad.append(f"icon must be an .svg or .png file inside the folder, up to {ICON_MAX // 1024} KB")
     return m, bad

@@ -535,9 +535,13 @@ async function sync(force, fresh) {   // ① = the jobs of the open task (or the
   const log = $("#log");
   if (DEST && !r.task) { bubble("bot", muiText("{Warning} That task is gone (or the link is wrong). Showing {Explore} All.")); return openView(null); }
   if (DEST && r.task.title !== DEST.title) { DEST.title = r.task.title; drawDest(); }
+  // decided once, before anything moves: just sent (a pending pair) or at the bottom → it ends at the bottom. A redraw from scratch (the last 40
+  // slide by one at every send in a long task) went through the unstuck meBubble insert and left the view at the top (2026-10-24 "after sending the view scrolls up")
+  const follow = fresh || !!log.querySelector(".pending") || atEnd(), top = log.scrollTop;
   log.querySelectorAll(".pending").forEach((x) => x.remove());
   const shown = [...log.querySelectorAll(".msg.bot[data-jid]")].map((x) => x.dataset.jid), ids = r.jobs.map((j) => j.id);
-  if (fresh || shown.some((id, i) => ids[i] !== id)) {   // another view, or the order changed (priority send): draw from scratch
+  const redraw = fresh || shown.some((id, i) => ids[i] !== id);
+  if (redraw) {   // another view, or the order changed (priority send, the window of 40 moved): draw from scratch
     log.replaceChildren();   // which view this is: the open row in 📋 Tasks (🧭 All or the task) and 📨 To: over ③ (2026-10-18: no breadcrumb over the messages)
     if (!DEST) bubble("bot hello", muiText(HELLO));
     else if (!r.jobs.length) bubble("bot", `📨 This is the conversation of “${DEST.title}”. No messages yet ―― what you send runs in this task's session.`);
@@ -551,7 +555,8 @@ async function sync(force, fresh) {   // ① = the jobs of the open task (or the
     if (key !== b.dataset.key) { if (b.dataset.key && ENDED.includes(j.state)) treeStale = true; b.dataset.key = key; stick(() => drawJob(j, b)); }
   }
   if (JUMP) { toJob(JUMP) || toEnd(); JUMP = ""; }   // a message picked in a listed thread: shown once its view is drawn
-  else if (fresh) toEnd();
+  else if (follow) toEnd();
+  else if (redraw) log.scrollTop = top;   // reading further up: a redraw does not throw the view to the top
 }
 function tick() {   // the seconds move without redrawing (a redraw under the pointer would swallow the ⏹ click)
   tickQueue();
@@ -1174,6 +1179,53 @@ function setCur(c) { if (!NAV.going) { NAV.back = []; NAV.fwd = []; } NAV.top = 
 const folderQuote = (path, app) => ({ label: `${app ? "🧩" : "📁"} ${path}/`, text: "", path, rules: app && app.rules ? `${path}/${app.rules}` : "" });
 const quoteFolder = (path, app) => addQuotes([folderQuote(path, app)]);
 const absPath = (path) => (path ? `${INFO.workspace_path}/${path}` : INFO.workspace_path);   // to paste into a terminal or another chat
+const zipName = (path) => `${path.split("/").pop()}.folder.zip`;
+// An app or an extension that uses files outside its folder (../, an absolute path, a link out) would not run from its zip: the person
+// sees them first and may still take it (2026-10-24 "check what an app or an extension depends on before it is downloaded"), or 📥 have
+// the agent copy them in: a prompt lands in ③ with the folder quoted, for the person to read and send (2026-10-24 "a button to bring them in")
+const depLine = (d) => `${d.target}  ← ${d.file}${d.ref.startsWith("link") ? "" : ` (${d.ref})`}${d.more ? ` +${d.more} more` : ""}`;
+function depAsk(path, deps) {   // → "take" · "dl" · anything else: no
+  const d = $("#depdlg"), name = path.split("/").pop(), n = `${deps.length}${deps.length >= 50 ? "+" : ""}`;
+  $("#depwhat").textContent = `“${name}” uses ${n} file${deps.length > 1 ? "s" : ""} outside its folder. Its ${zipName(path)} will not hold them, so it may not run elsewhere.`;
+  $("#deplist").replaceChildren(...deps.map((x) => el("li", {}, el("code", {}, x.target), " ← ", x.file, x.more ? el("small", {}, ` +${x.more} more`) : null)));
+  return new Promise((done) => { d.onclose = () => done(d.returnValue); d.returnValue = ""; d.showModal(); $("#depno").focus(); });   // the safe choice has the focus
+}
+function depTake(path, app, deps) {
+  addQuotes([folderQuote(path, app)]);   // puts @n where the cursor of ③ is
+  const ta = $("#say"), at = ta.selectionStart, kind = app ? "app" : "extension";
+  const text = `← this ${kind} uses ${deps.length >= 50 ? "50 or more" : deps.length} file${deps.length > 1 ? "s" : ""} outside its folder, so its ${zipName(path)} would not run elsewhere. Bring them in:
+- copy each one into the folder (a subfolder such as vendor/ or shared/ is fine), and point the code at the copy with a path relative to the folder (no ../, no absolute path)
+- leave the originals where they are
+- do not copy a whole project, a large folder, a venv or cache, or another program's data: list those and ask me instead
+- then check that it still runs, and that nothing in it points outside its folder
+
+${deps.map((d) => `- ${depLine(d)}`).join("\n")}
+`;
+  ta.value = LS.aetherDraft = ta.value.slice(0, at) + text + ta.value.slice(at);
+  ta.focus(); ta.selectionStart = ta.selectionEnd = at + text.length; growSay();
+}
+async function zipGet(path, app, history = true) {   // the name in the URL and in download too: a relay that drops Content-Disposition would save it as "zip" (2026-10-24)
+  const h = history ? "" : "&history=0";   // without the app's past data and venvs: what is checked is what the zip holds
+  const deps = (await api(`api/zipdeps?path=${encodeURIComponent(path)}${h}`)).deps;
+  const how = deps.length ? await depAsk(path, deps) : "dl";
+  if (how === "take") return depTake(path, app, deps);
+  if (how !== "dl") return;
+  const a = el("a", { href: `api/zip/${encodeURIComponent(zipName(path))}?path=${encodeURIComponent(path)}&force=1${h}`, download: zipName(path) });
+  document.body.append(a); a.click(); a.remove();
+}
+// An app that names its past data (aether.json "history") gets ▾ at the edge of ⬇: with it, or without it and its venvs ―― to try the app
+// elsewhere, where the venvs are made again (2026-10-25 "DLボタンの端をメニュー化して、過去データを含む、過去データを含まないを選べるように")
+function zipBtn(path, app, attrs = {}) {
+  const go = (history) => zipGet(path, app, history).catch((err) => alert(err.message));
+  const main = fbtn("⬇", () => go(true), { class: "ficon", title: `Download this ${app ? "app" : "folder"} as ${zipName(path)}`, "aria-label": `Download this ${app ? "app" : "folder"} as zip`, ...attrs });
+  if (!app || !(app.history || []).length) return main;
+  const item = (id, words, small, history) => fbtn([el("span", { class: "fml" }, words), el("small", {}, small)], () => { menu.hidden = true; go(history); }, { role: "menuitem", id });
+  const menu = el("div", { class: "fmenu fzipm", role: "menu", hidden: "" },
+    item("fzipwith", "With past data", "everything in the folder", true),
+    item("fzipwithout", "Without past data", `leaves out ${app.history.join(", ")} and venvs (made again where it goes)`, false));
+  return el("span", { class: "fsplit" }, main, fbtn("▾", () => { const was = menu.hidden; document.querySelectorAll("#fbar .fmenu").forEach((m) => { m.hidden = true; }); menu.hidden = !was; },
+    { class: "fmore", id: `${attrs.id || "fzip"}more`, "aria-haspopup": "menu", title: "Download with or without its past data", "aria-label": "Download with or without its past data" }), menu);
+}
 const copyPath = (path, attrs = {}) => copyBtn(() => absPath(path), `Copy the path: ${absPath(path)}`, { class: "ficon", ...attrs });
 async function openDir(path) {
   const d = await api(`api/files?path=${encodeURIComponent(path)}`);
@@ -1182,7 +1234,7 @@ async function openDir(path) {
   const grid = nm > 0 && (LS.aetherGrid ? LS.aetherGrid === "1" : nm * 2 >= d.items.length - nd);   // the person's pick, else thumbnails when half the files or more are media
   bar(path, ...(d.app ? [fbtn(`▶ Open ${d.app.label}`, () => openApp(path, d.app))] : []),
     path ? fbtn("📎", () => quoteFolder(path, d.app), { class: "ficon", id: "fquotedir", title: `Quote this ${d.app ? "app" : "folder"} in ③`, "aria-label": `Quote this ${d.app ? "app" : "folder"} in ③` }) : null,
-    copyPath(path, { id: "fcopypath" }),
+    copyPath(path, { id: "fcopypath" }), path ? zipBtn(path, d.app, { id: "fzipdir" }) : null,
     nm ? fbtn(grid ? "☰ List" : "▦ Thumbnails", () => { LS.aetherGrid = grid ? "0" : "1"; openDir(path); }, { id: "fgridbtn", title: grid ? "Show the files as a list" : "Show images and videos as thumbnails (remembered)" }) : null,
     el("span", { class: "fcount" }, `${nd} folders · ${d.items.length - nd} files`));
   const go = (r) => async () => { await openRow(r); reveal(r.path).catch(() => {}); };   // a folder opens its contents (an app folder: the app), a file its preview
@@ -1265,7 +1317,7 @@ const openRow = (r) => (r.app ? Promise.resolve(openApp(r.path, r.app)) : r.dir 
 function openApp(path, app) {
   setCur({ kind: "app", path, app });
   bar(path, el("span", { class: "fhint" }, `🧩 ${app.label}`), fbtn("📁 Contents", () => openDir(path), { title: "Show the files of this folder" }),
-    fbtn("📎", () => quoteFolder(path, app), { class: "ficon", title: "Quote this app in ③", "aria-label": "Quote this app in ③" }),
+    fbtn("📎", () => quoteFolder(path, app), { class: "ficon", title: "Quote this app in ③", "aria-label": "Quote this app in ③" }), zipBtn(path, app, { id: "fzipapp" }),
     app.url ? fbtn("🔄", () => openApp(path, app), { class: "ficon", title: "Reload", "aria-label": "Reload" }) : null);
   if (app.url) return openServed(app);
   frame(fileUrl(`${path}/${app.entry}`), app.label, () => post("open", { path, name: app.label, folder: true }));
@@ -1343,6 +1395,7 @@ function filesEvents() {
 // Files and folders dropped from the desktop onto the explorer are added to the workspace (2026-10-24 "add files by dragging them onto the EXPLORER").
 // On a folder: into it (a closed one opens after a moment's hover); on a file: beside it; on the empty space: the workspace root.
 // Nothing is replaced: a taken name becomes "name (2).ext". A file dropped anywhere else does nothing (the browser would leave the page for it).
+// A "<name>.folder.zip" (what ⬇ makes) comes back unpacked as the folder <name> (2026-10-24 "unzip a dropped .folder.zip"); one that cannot be stays a zip.
 const isFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
 function dropDir(e) {
   const r = e.target.closest?.("#frows .frow");
@@ -1370,6 +1423,7 @@ async function upload(dir, items) {
       const j = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(j.error || r.statusText);
       first ||= path ? `${dir ? `${dir}/` : ""}${path.split("/")[0]}` : j.path;
+      if (j.unzip_error) failed.push(`${file.name}: added, but not unpacked (${j.unzip_error})`);
     } catch (err) { failed.push(`${file.name}: ${err.message}`); }
   }
   head.textContent = name;
@@ -1377,7 +1431,7 @@ async function upload(dir, items) {
   if (dir) await reveal(dir, true);
   if (first) { FOCUS = first; drawTree(); toFocus(); } else drawTree();
   if (CUR && CUR.kind === "dir" && CUR.path === dir) openDir(dir).catch(() => {});   // the folder on the right shows them too
-  if (failed.length) alert(`Not added (${failed.length} of ${list.length}):\n${failed.slice(0, 10).join("\n")}`);
+  if (failed.length) alert(`Not added or not unpacked (${failed.length} of ${list.length}):\n${failed.slice(0, 10).join("\n")}`);
 }
 function treeDrop() {
   const tree = $("#ftree"), mark = (dir) => {

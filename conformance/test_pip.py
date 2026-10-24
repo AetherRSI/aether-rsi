@@ -102,7 +102,7 @@ class Pip(unittest.TestCase):
         self.assertEqual(info["errors"], [])
         self.assertTrue(info["locked"])
         self.assertIn("echo-agent", [a["id"] for a in info["agents"]])
-        self.assertIn("md-preview", [p["id"] for p in info["previews"]])
+        self.assertIn("json-preview", [p["id"] for p in info["previews"]])
         with urllib.request.urlopen(base + "/", timeout=5) as page:
             self.assertEqual(page.status, 200)
 

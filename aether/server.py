@@ -21,7 +21,14 @@
   POST /api/config            {agent?, open_with?, workspace?}  the person's choices (shared keys only; core_locked is not one)
   GET  /api/files?path=       one folder of the workspace (409 until a workspace is set)
   GET  /api/read?path=        one text file of the workspace
+  GET  /api/zip[/<name>]?path=  ⬇ a folder (or an app) of the workspace as "<folder>.folder.zip" ―― what the tree shows of it. <name>: anything (the shell puts
+                              the file name there, so a proxy that drops Content-Disposition still saves it by that name). An app or an extension that
+                              points at files outside its folder → 409 {error, deps} (files.deps), unless force=1. history=0 (an app): without its
+                              past data (aether.json "history": left as empty folders) and without venvs (made again where it goes)
+  GET  /api/zipdeps?path=[&history=0]  {deps: [{target, file, ref, more}]} ―― what /api/zip would refuse for (the shell asks first, then the person decides)
   POST /api/upload?path=&name=  the raw body becomes a file of the workspace folder path (made when missing; a taken name becomes "name (2).ext") → {path}
+                              a "<name>.folder.zip" (what ⬇ makes) is then unpacked there into the folder <name> and removed → {path: the folder, unzipped: true}
+                              (a zip that cannot be unpacked stays as it is → {path, unzip_error})
   POST /api/paste             the raw body (Content-Type image/png|jpeg|gif|webp) is an image pasted into ③, kept outside the workspace (paste.py) → {name, path}
   GET  /api/paste/<name>      that image (the chip's thumbnail) · POST /api/paste/<name>/drop  ✕ on its chip → {dropped} (false while a message quotes it)
   POST /api/render            {ext, path, force?, wait?, page?, width?}  pages a preview draws (manifest render, see render.py) → {state, running, error, key, dir, pages}
@@ -46,10 +53,11 @@ import mimetypes
 import ipaddress
 import os
 import re
+import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, unquote, urlparse
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 from . import PROTOCOL, VERSION, extensions, files, paste, render, settings, voice
 from .runner import Runner, append, compose, quotes_of
@@ -613,6 +621,25 @@ def handler(core: Core):
                 ctype += "; charset=utf-8"
             self._send(200, body, ctype, sandbox)
 
+        def _zip(self, rel: str, force: bool, history: bool = True):
+            """⬇ GET /api/zip: built into a temp file first (an error is still a JSON answer), then sent in chunks."""
+            if not force and (d := files.deps(core.need_ws(), rel, core.deny(), history=history)):
+                return self._json({"error": f"{len(d)} files outside this folder are used by it: the zip would not hold them (force=1 makes it anyway)", "deps": d}, 409)
+            with tempfile.TemporaryFile() as t:
+                name = files.zip_folder(core.need_ws(), rel, t, core.deny(), history=history)
+                n = t.tell()
+                t.seek(0)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/zip")
+                self.send_header("Content-Length", str(n))
+                ascii_name = name.encode("ascii", "replace").decode().replace("?", "_").replace('"', "_")
+                self.send_header("Content-Disposition", f"attachment; filename=\"{ascii_name}\"; filename*=UTF-8''{quote(name)}")
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                self.end_headers()
+                while chunk := t.read(1 << 20):
+                    self.wfile.write(chunk)
+
         def _mic(self, jid: str, ticket: str):
             """🎙 GET /api/jobs/<id>/audio?ticket= with Upgrade: websocket → 101, then the mic runs on this thread (voice.py)."""
             key = self.headers.get("Sec-WebSocket-Key", "")
@@ -682,6 +709,10 @@ def handler(core: Core):
                     return self._json({"jobs": jobs, "task": core.store.task(q.get("task") or "")})
                 if path == "/api/files":
                     return self._json(files.listing(core.need_ws(), q.get("path", ""), core.deny()))
+                if path == "/api/zip" or path.startswith("/api/zip/"):
+                    return self._zip(q.get("path", ""), q.get("force") == "1", q.get("history") != "0")
+                if path == "/api/zipdeps":
+                    return self._json({"deps": files.deps(core.need_ws(), q.get("path", ""), core.deny(), history=q.get("history") != "0")})
                 if path.startswith("/api/paste/"):
                     return self._file(core.pastes.path(path.rsplit("/", 1)[1]), False)
                 if path == "/api/render/img":
@@ -712,7 +743,14 @@ def handler(core: Core):
                 n = int(self.headers.get("Content-Length") or 0)
                 if path == "/api/upload":   # a file dropped on the explorer: the body is the file, not JSON
                     q = {k: v[0] for k, v in parse_qs(u.query).items()}
-                    return self._json({"path": files.upload(core.need_ws(), q.get("path", ""), q.get("name", ""), self.rfile, n, core.deny())})
+                    name = q.get("name", "")
+                    saved = files.upload(core.need_ws(), q.get("path", ""), name, self.rfile, n, core.deny())
+                    if not name.lower().endswith(files.FOLDER_ZIP) or name.lower() == files.FOLDER_ZIP:
+                        return self._json({"path": saved})
+                    try:
+                        return self._json({"path": files.unzip_folder(core.need_ws(), saved, name[:-len(files.FOLDER_ZIP)], core.deny()), "unzipped": True})
+                    except (ValueError, OSError) as e:
+                        return self._json({"path": saved, "unzip_error": str(e)})
                 if path == "/api/paste":   # an image pasted into ③: the body is the image
                     return self._json(core.pastes.add(self.rfile, n, self.headers.get("Content-Type", "")))
                 b = json.loads(self.rfile.read(n) or b"{}") if n else {}

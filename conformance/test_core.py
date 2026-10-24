@@ -104,7 +104,7 @@ class Api(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertTrue(i["locked"])
         self.assertEqual(i["protocol"], "0.1")
-        self.assertEqual({a["id"] for a in i["agents"]}, {"claude-code", "echo-agent", "gemini-argon", "gemini-live"})
+        self.assertEqual({a["id"] for a in i["agents"]}, {"claude-code", "echo-agent"})   # the core's fallback + the sample
         self.assertEqual(i["errors"], [])
 
     def test_post_needs_header(self):
@@ -526,42 +526,44 @@ class Api(unittest.TestCase):
             live.close()
 
     def test_files_and_frames(self):
-        code, f = self.live.json("api/files?path=samples")
+        code, f = self.live.json("api/files?path=apps")
         self.assertEqual(code, 200)
         self.assertIn("hello-app", [i["name"] for i in f["items"] if i.get("app")])
         self.assertEqual(self.live.call("api/files?path=..")[0], 403)
         self.assertEqual(self.live.call("api/read?path=../aether/server.py")[0], 403)
-        code, h, _ = self.live.call("files/samples/hello-app/index.html")
+        code, h, _ = self.live.call("files/apps/hello-app/index.html")
         self.assertEqual(code, 200)
         self.assertEqual(h["Content-Security-Policy"], "sandbox allow-scripts allow-modals")   # modals: print (spec 3)
-        _, _, page = self.live.call("x/md-preview/index.html")
+        _, _, page = self.live.call("x/json-preview/index.html")
         self.assertIn(b"window.aether", page)   # the SDK is inlined (a sandboxed page behind a proxy cannot fetch it)
         self.assertNotIn(b'<script src="aether-sdk.js"></script>', page)
-        code, h, body = self.live.call("x/md-preview/aether-sdk.js")
+        code, h, body = self.live.call("x/json-preview/aether-sdk.js")
         self.assertEqual(code, 200)
         self.assertIn(b"window.aether", body)
         for name in (b"bar(", b"fullscreen("):   # a page's own controls in the shell's bar (spec 3.1)
             self.assertIn(name, body)
-        code, _, body = self.live.call("x/md-preview/aether-icons.js")   # the shell's one-colour icons, beside any entry (spec 3)
+        code, _, body = self.live.call("x/json-preview/aether-icons.js")   # the shell's one-colour icons, beside any entry (spec 3)
         self.assertEqual(code, 200)
         for name in (b"function mui(", b"function muiText(", b"AttachFile:"):
             self.assertIn(name, body)
-        self.assertEqual(self.live.call("x/md-preview/../../../aether/server.py")[0], 403)
+        self.assertEqual(self.live.call("x/json-preview/../../../aether/server.py")[0], 403)
         self.assertEqual(self.live.call("files/../aether/server.py")[0], 403)
 
-    def test_md_and_pptx_previews_bundle(self):
-        for ext in ("md-preview", "pptx-preview"):
-            code, _, page = self.live.call(f"x/{ext}/index.html")
-            self.assertEqual(code, 200)
-            for tag in (b'<script src="view.js">', b'<link rel="stylesheet" href="view.css">'):
-                self.assertNotIn(tag, page)   # inlined
-            for use in (b"aether.bar(", b"aether.quote(", b"aether.scrolled(", b"aether.download()"):
-                self.assertIn(use, page)
-        _, _, md = self.live.call("x/md-preview/index.html")
-        self.assertIn(b'aether.read("mermaid.min.js")', md)
-        code, _, js = self.live.call("x/md-preview/mermaid.min.js")
+    def test_zip_a_folder(self):
+        """⬇ on a folder or an app: "<folder>.folder.zip" holding what the tree shows of it, never the workspace root or a path outside."""
+        import io
+        import zipfile
+        code, h, body = self.live.call("api/zip?path=apps/hello-app")
         self.assertEqual(code, 200)
-        self.assertGreater(len(js), 1_000_000)
+        self.assertEqual(h["Content-Type"], "application/zip")
+        self.assertEqual(h["Content-Disposition"], "attachment; filename=\"hello-app.folder.zip\"; filename*=UTF-8''hello-app.folder.zip")
+        self.assertEqual(self.live.call("api/zip/hello-app.folder.zip?path=apps/hello-app")[2], body)   # the name in the URL (for a proxy that drops the header)
+        self.assertEqual(self.live.json("api/zipdeps?path=apps/hello-app"), (200, {"deps": []}))
+        names = zipfile.ZipFile(io.BytesIO(body)).namelist()
+        self.assertIn("hello-app/index.html", names)
+        self.assertTrue(all(n.startswith("hello-app/") for n in names))
+        for path, want in (("", 404), ("..", 403), ("apps/hello-app/index.html", 404), ("nope", 404)):
+            self.assertEqual(self.live.call(f"api/zip?path={path}")[0], want, path)
 
 
 class Unlocked(unittest.TestCase):
@@ -739,6 +741,89 @@ class Upload(unittest.TestCase):
         with self.assertRaises(ValueError):   # the body ended early: nothing is kept
             files.upload(self.ws, "", "cut.txt", io.BytesIO(b"abc"), 10)
         self.assertEqual([p.name for p in self.ws.iterdir() if "cut" in p.name], [])
+
+    def test_unzips_a_folder_zip(self):
+        """A "<name>.folder.zip" (what ⬇ makes) is unpacked into the folder <name> and removed; a taken name becomes "<name> (2)"."""
+        import zipfile
+
+        def zipped(entries, links=()):
+            b = io.BytesIO()
+            with zipfile.ZipFile(b, "w") as z:
+                for n, data in entries.items():
+                    z.writestr(n, data)
+                for n in links:
+                    i = zipfile.ZipInfo(n)
+                    i.external_attr = 0o120777 << 16
+                    z.writestr(i, "/etc/passwd")
+            return b.getvalue()
+        made = zipped({"proj/": "", "proj/a.txt": "A", "proj/sub/b.txt": "B", "proj/.git/x": "x", "proj/.DS_Store": "z"}, links=("proj/l",))
+        self.assertEqual(self.put("in", "proj.folder.zip", made), (200, {"path": "in/proj", "unzipped": True}))
+        self.assertEqual(sorted(str(p.relative_to(self.ws / "in")) for p in (self.ws / "in").rglob("*")), ["proj", "proj/a.txt", "proj/sub", "proj/sub/b.txt"])
+        self.assertEqual(self.put("in", "proj.folder.zip", made), (200, {"path": "in/proj (2)", "unzipped": True}))
+        self.assertEqual((self.ws / "in/proj/a.txt").read_text(), "A")
+        self.assertEqual(self.put("", "flat.folder.zip", zipped({"x.txt": "X", "y.txt": "Y"}))[1]["path"], "flat")   # no top folder: the files go straight in
+        self.assertEqual(sorted(p.name for p in (self.ws / "flat").iterdir()), ["x.txt", "y.txt"])
+        self.assertEqual(self.put("", "plain.zip", made), (200, {"path": "plain.zip"}))   # only .folder.zip is unpacked
+        for name, data in (("evil.folder.zip", zipped({"../out.txt": "x"})), ("abs.folder.zip", zipped({"/tmp/out.txt": "x"})), ("bad.folder.zip", b"not a zip")):
+            code, j = self.put("", name, data)
+            self.assertEqual((code, j["path"]), (200, name), name)   # kept as a zip, with the reason
+            self.assertIn("unzip_error", j)
+        self.assertFalse((self.ws.parent / "out.txt").exists())
+        self.assertEqual([p.name for p in self.ws.rglob("*aether-unzip*")], [])   # no temp folder left
+
+    def test_zip_refuses_an_app_using_files_outside(self):
+        """⬇ on an app or an extension that points at files outside its folder: 409 with them, unless force=1. A plain folder is never checked."""
+        app, out = self.ws / "app", self.ws / "shared"
+        (app / "sub").mkdir(parents=True)
+        out.mkdir()
+        (out / "lib.js").write_text("x")
+        (out / "data.csv").write_text("x")
+        (app / "aether.json").write_text(json.dumps({"aether": "0.1", "kind": "app", "label": "A", "entry": "index.html"}))
+        (app / "index.html").write_text('<script src="../shared/lib.js"></script><script src="../shared/missing.js"></script><script src="./own.js"></script>')
+        (app / "sub/run.py").write_text(f'ROOT = Path(__file__).resolve().parents[2]\nDATA = "{out}/data.csv"\nHOME = "~/.cache/x"\n')
+        (app / "link.md").symlink_to(self.ws / "a.md")
+        code, j = self.live.json("api/zipdeps?path=app")
+        got = {d["target"]: d["file"] for d in j["deps"]}
+        self.assertEqual(got, {"shared/lib.js": "index.html", "shared/data.csv": "sub/run.py", str(self.ws): "sub/run.py", "a.md": "link.md"})   # a missing one and ~/.x are not
+        code, h, body = self.live.call("api/zip?path=app")
+        self.assertEqual(code, 409)
+        self.assertEqual(len(json.loads(body)["deps"]), 4)
+        self.assertEqual(self.live.call("api/zip?path=app&force=1")[0], 200)
+        (app / "aether.json").unlink()   # no longer an app: a plain folder
+        self.assertEqual(self.live.json("api/zipdeps?path=app")[1], {"deps": []})
+        self.assertEqual(self.live.call("api/zip?path=app")[0], 200)
+
+    def test_zip_without_past_data(self):
+        """history=0 on an app with "history": its past data is left out (an empty folder stays) and so are venvs, and the
+        check looks only at what that zip holds. Without history=0 nothing changes; a "history" path out of the folder breaks the manifest."""
+        import zipfile
+        app, out = self.ws / "lab", self.ws / "other"
+        for d in ("runs/r1", "venv/bin", "tools", "sim/experiments/e1"):
+            (app / d).mkdir(parents=True)
+        out.mkdir()
+        (out / "old.json").write_text("x")
+        (app / "aether.json").write_text(json.dumps({"aether": "0.1", "kind": "app", "id": "lab", "label": "L", "entry": "index.html", "history": ["runs", "./sim/experiments/", "log.md"]}))
+        (app / "index.html").write_text("<p>lab</p>")
+        (app / "tools/go.py").write_text("print(1)")
+        (app / "log.md").write_text("past")
+        (app / "runs/r1/train.py").write_text(f'DATA = "{out}/old.json"\n')   # past data pointing out: only it would warn
+        (app / "sim/experiments/e1/check.py").write_text(f'DATA = "{out}/old.json"\n')
+        (app / "venv/pyvenv.cfg").write_text("home = /x")
+        (app / "venv/bin/python").write_text("x")
+        self.assertEqual(self.live.json("api/files?path=")[1]["items"][[i["name"] for i in self.live.json("api/files?path=")[1]["items"]].index("lab")]["app"]["history"],
+                         ["runs", "./sim/experiments/", "log.md"])
+        self.assertEqual([d["target"] for d in self.live.json("api/zipdeps?path=lab")[1]["deps"]], ["other/old.json"])
+        self.assertEqual(self.live.json("api/zipdeps?path=lab&history=0")[1], {"deps": []})
+        self.assertEqual(self.live.call("api/zip?path=lab")[0], 409)
+        code, h, body = self.live.call("api/zip?path=lab&history=0")
+        self.assertEqual(code, 200)
+        names = set(zipfile.ZipFile(io.BytesIO(body)).namelist())
+        self.assertEqual(names, {"lab/", "lab/aether.json", "lab/index.html", "lab/tools/go.py", "lab/runs/", "lab/sim/experiments/"})
+        names = set(zipfile.ZipFile(io.BytesIO(self.live.call("api/zip?path=lab&force=1")[2])).namelist())
+        self.assertTrue({"lab/runs/r1/train.py", "lab/venv/pyvenv.cfg", "lab/log.md", "lab/sim/experiments/e1/check.py"} <= names)
+        (app / "aether.json").write_text(json.dumps({"aether": "0.1", "kind": "app", "id": "lab", "label": "L", "entry": "index.html", "history": ["../other"]}))
+        self.assertIn("other/old.json", [d["target"] for d in self.live.json("api/zipdeps?path=lab&history=0")[1]["deps"]])   # a broken manifest: nothing is left out
+        self.assertNotIn("app", [i for i in self.live.json("api/files?path=")[1]["items"] if i["name"] == "lab"][0])
 
 
 class Install(unittest.TestCase):
