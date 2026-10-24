@@ -3,7 +3,7 @@
 The full guide. The short version is the [README](../README.md).
 
 A small, local workbench for working with coding agents: **send a message → it queues → an agent runs it → you watch, inject, or stop**.
-The core does only three things. Everything else is an extension that speaks one protocol ([spec/v0.1.md](../spec/v0.1.md)).
+The core does only three things. Everything else is an extension that speaks one protocol ([spec/v0.1.md](v0.1.md)).
 
 | Core | What it does |
 |:--|:--|

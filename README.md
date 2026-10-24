@@ -29,7 +29,7 @@ Binds to 127.0.0.1, keeps agents out of the core and its data, and runs extensio
 
 ## More
 
-- [docs/guide.md](docs/guide.md) ― the full guide (the screen, settings, each kind of extension, voice, tests)
+- [spec/guide.md](spec/guide.md) ― the full guide (the screen, settings, each kind of extension, voice, tests)
 - [spec/v0.1.md](spec/v0.1.md) ― the protocol · `conformance/` ― the tests (`python3 -m unittest discover -s conformance -t .`)
 
 Status: v0.1 draft. License: not chosen yet.
