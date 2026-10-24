@@ -3,7 +3,8 @@
   {"extensions": ["/abs/folder", ...],                       always read, whatever the workspace (after its extensions/)
    "vertex": {"credentials": "/abs/key.json", "project": "id", "region": "global"},   handed to every agent as the env below
    "env": {"NAME": "value"},                                  more env for agents (wins over vertex)
-   "hosts": ["name.example"]}                                 more names the page may be opened by (a proxy in front); IP addresses and localhost always pass
+   "hosts": ["name.example"],                                 more names the page may be opened by (a proxy in front); IP addresses and localhost always pass
+   "allow_remote": false}                                     true: other machines may connect (default: only this one, which a proxy in front also is)
 
 Read again when the file changes, so editing it needs no restart. A bad entry is skipped and reported, never fatal.
 The core passes the credentials file's path, never its contents. Keep settings.json out of git (settings.example.json is the template).
@@ -31,9 +32,14 @@ def where(repo: Path, data: Path, source_checkout: bool) -> Path:
 
 def parse(raw) -> tuple:
     """(settings, errors). settings = {"extensions": [Path], "env": {str: str}}."""
-    out, bad = {"extensions": [], "env": {}, "hosts": []}, []
+    out, bad = {"extensions": [], "env": {}, "hosts": [], "allow_remote": False}, []
     if not isinstance(raw, dict):
         return out, ["must be a JSON object"]
+    if "allow_remote" in raw:
+        if isinstance(raw["allow_remote"], bool):
+            out["allow_remote"] = raw["allow_remote"]
+        else:
+            bad.append("allow_remote must be true or false")
     hosts = raw.get("hosts", [])
     for h in hosts if isinstance(hosts, list) else [hosts]:
         if isinstance(h, str) and h.strip() and not any(c in h for c in "/: "):

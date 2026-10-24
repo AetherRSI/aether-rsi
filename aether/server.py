@@ -174,7 +174,7 @@ class Core:
         self.settings = settings.Settings(settings.where(REPO, self.data, source_checkout()))
         self._ext, self._ext_at = None, None
         self.runner = Runner(self.store, lambda: self.ext()["agent"], self.ws, [], self.data / "logs")
-        self.runner.env = lambda: self.settings.get()[0]["env"]
+        self.runner.env = self.agent_env
         self.relock()
 
     def relock(self):
@@ -190,11 +190,60 @@ class Core:
         dirs = ([self.ws / "extensions"] if self.ws else []) + s["extensions"] + [self.data / "extensions"]   # settings.json extensions: always, whatever the workspace
         seen = set()   # one folder twice (the workspace's own extensions/ is also in settings) would clash with itself: keep the first
         dirs = [d for d in dirs if not (str(d.resolve()) in seen or seen.add(str(d.resolve())))]
-        stamp = (extensions.stamp([*dirs, SPARE]), tuple(bad))
+        trusted, ws_ext = self.trusted(), (self.ws / "extensions").resolve() if self.ws else None
+        stamp = (extensions.stamp([*dirs, SPARE]), tuple(bad), trusted)
         if stamp != self._ext_at:
-            self._ext, self._ext_at = extensions.scan(dirs, self.locked, [SPARE]), stamp
+            ext = extensions.scan(dirs, self.locked, [SPARE])
+            if ws_ext and not trusted:   # an untrusted workspace's own extensions/ may not run commands, nor take the id of a trusted one
+                safe = extensions.scan([d for d in dirs if d.resolve() != ws_ext], self.locked, [SPARE])
+                for kind in ("agent", "preview"):
+                    for k, m in list(ext[kind].items()):
+                        if Path(m["dir"]).is_relative_to(ws_ext) and (kind == "agent" or m.get("render")):
+                            ext["errors"].append(f"{k}: not run ― the workspace is not trusted to run its own commands (trust it with: aether trust {self.ws})")
+                            if k in safe[kind]:
+                                ext[kind][k] = safe[kind][k]
+                            else:
+                                del ext[kind][k]
+            self._ext, self._ext_at = ext, stamp
             self._ext["errors"] = [*bad, *self._ext["errors"]]
         return self._ext
+
+    def trusted(self) -> bool:
+        """Whether the person trusts the workspace's own code. config.json `trusted` lists folders (a workspace inside one counts), added
+        by the person with `aether trust <folder>` or `aether init`. Untrusted: the workspace's extensions/ may not run commands (agents,
+        render) and agents start without its settings, hooks and MCP servers (they would run before anyone looks)."""
+        if not self.ws:
+            return False
+        try:
+            listed = json.loads(self.cfg.read_text()).get("trusted") if self.cfg.is_file() else None
+        except (OSError, ValueError, AttributeError):
+            listed = None
+        for t in listed if isinstance(listed, list) else []:
+            try:
+                p = Path(str(t)).expanduser().resolve()
+            except (OSError, RuntimeError):
+                continue
+            if self.ws == p or p in self.ws.parents:
+                return True
+        return False
+
+    def agent_env(self) -> dict:
+        """settings.json env, plus what an agent must know: AETHER_WORKSPACE_TRUSTED ("1" only when the person trusts the workspace: an
+        adapter may then load its settings, hooks and MCP servers), AETHER_SECRETS (files its own tools must not read: the Vertex key,
+        os.pathsep-joined) and AETHER_AGENT=1 (`aether trust` refuses to run under it)."""
+        env = dict(self.settings.get()[0]["env"])
+        secrets = [env["GOOGLE_APPLICATION_CREDENTIALS"]] if env.get("GOOGLE_APPLICATION_CREDENTIALS") else []
+        return {**env, "AETHER_WORKSPACE_TRUSTED": "1" if self.trusted() else "0", "AETHER_SECRETS": os.pathsep.join(secrets), "AETHER_AGENT": "1"}
+
+    def peer_ok(self, addr) -> bool:
+        """Only this machine reaches the core (a proxy in front runs on it too), unless settings.json allow_remote is true."""
+        try:
+            a = ipaddress.ip_address(str(addr).split("%")[0])
+            if (a.ipv4_mapped if a.version == 6 and a.ipv4_mapped else a).is_loopback:
+                return True
+        except ValueError:
+            pass
+        return bool(self.settings.get()[0].get("allow_remote"))
 
     def default_agent(self) -> str:
         agents = {k: a for k, a in self.ext()["agent"].items() if not a.get("disabled")}
@@ -452,6 +501,9 @@ def handler(core: Core):
             self._send(200, body, ctype, sandbox)
 
         def _host_ok(self) -> bool:
+            if not core.peer_ok(self.client_address[0]):
+                self._json({"error": "forbidden: only this machine may connect (settings.json allow_remote lets others in)"}, 403)
+                return False
             if core.host_ok(self.headers.get("Host"), self.headers.get("Origin")):
                 return True
             self._json({"error": "forbidden host: open the page by 127.0.0.1 or localhost, or add the name to settings.json hosts"}, 403)

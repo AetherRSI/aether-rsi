@@ -1,9 +1,10 @@
-"""python3 -m aether [--workspace DIR] [--port N] [--reload]   |   python3 -m aether check <extension folder>
+"""python3 -m aether [--workspace DIR] [--port N] [--reload]   |   python3 -m aether check <extension folder>   |   python3 -m aether trust [DIR] [--remove]
 (installed with pip, the command is `aether`). Without --workspace the core uses the folder saved from the page; a fresh install asks for it there."""
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -14,6 +15,47 @@ from .server import check_workspace, serve
 def default_workspace() -> str:
     """AETHER_WORKSPACE, else "" ―― the folder saved in config.json, or (a fresh install) the shell asks for one."""
     return os.environ.get("AETHER_WORKSPACE") or ""
+
+
+def default_data() -> str:
+    return os.environ.get("AETHER_DATA") or str(Path.home() / ".aether-rsi")
+
+
+def set_trusted(data, folder: Path, on: bool = True) -> list:
+    """config.json `trusted`: the folders whose own code the person trusts (their extensions/ may run commands; agents load their
+    settings, hooks and MCP servers). Returns the list as saved."""
+    d = Path(data).expanduser()
+    d.mkdir(parents=True, exist_ok=True)
+    cfg = d / "config.json"
+    try:
+        conf = json.loads(cfg.read_text()) if cfg.is_file() else {}
+    except ValueError:
+        conf = {}
+    have = [t for t in (conf.get("trusted") or []) if isinstance(t, str) and t != str(folder)]
+    conf["trusted"] = [*have, str(folder)] if on else have
+    tmp = cfg.with_suffix(".tmp")
+    tmp.write_text(json.dumps(conf, ensure_ascii=False, indent=2))
+    tmp.replace(cfg)
+    return conf["trusted"]
+
+
+def trust(argv) -> int:
+    ap = argparse.ArgumentParser(prog="aether trust", description="Trust a folder's own code: its extensions/ may run commands and agents "
+                                 "load its settings, hooks and MCP servers. For the person: it refuses to run inside an agent's job")
+    ap.add_argument("dir", nargs="?", default=".")
+    ap.add_argument("--remove", action="store_true", help="stop trusting it")
+    ap.add_argument("--data", default=default_data())
+    a = ap.parse_args(argv)
+    if os.environ.get("AETHER_AGENT") == "1":
+        print("aether trust: refused inside an agent's job (only the person trusts a folder)", file=sys.stderr)
+        return 2
+    folder = Path(a.dir).expanduser().resolve()
+    if not folder.is_dir():
+        print(f"aether trust: no such folder: {folder}", file=sys.stderr)
+        return 2
+    now = set_trusted(a.data, folder, not a.remove)
+    print(f"{'no longer trusted' if a.remove else 'trusted'}: {folder}  (trusted now: {len(now)})")
+    return 0
 
 
 def main(argv=None):
@@ -28,6 +70,8 @@ def main(argv=None):
                 print(f"     - {b}")
             bad_total += len(bad)
         return 1 if bad_total else 0
+    if argv[:1] == ["trust"]:
+        return trust(argv[1:])
     ap = argparse.ArgumentParser(prog="aether", description=f"AetherRSI {VERSION}")
     ap.add_argument("--workspace", default=default_workspace())
     ap.add_argument("--data", default=os.environ.get("AETHER_DATA") or str(Path.home() / ".aether-rsi"))

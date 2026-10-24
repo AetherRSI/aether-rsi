@@ -64,13 +64,17 @@ def free_port() -> int:
 class Live:
     """A core on a free port with a fresh data folder."""
 
-    def __init__(self, workspace=None, config=None):
-        """workspace None: the samples. "": none (a fresh install)."""
+    def __init__(self, workspace=None, config=None, trust=True):
+        """workspace None: the samples. "": none (a fresh install). trust: the person trusts the workspace (its extensions/ run)."""
         self.data = Path(tempfile.mkdtemp())
-        if config is not None:
-            (self.data / "config.json").write_text(json.dumps(config))
+        ws = SAMPLES if workspace is None else workspace
+        conf = dict(config or {})
+        if ws and trust:
+            conf.setdefault("trusted", [str(ws)])
+        if conf or config is not None:
+            (self.data / "config.json").write_text(json.dumps(conf))
         self.port = free_port()
-        self.srv = serve_in_thread(SAMPLES if workspace is None else workspace, self.data, port=self.port)
+        self.srv = serve_in_thread(ws, self.data, port=self.port)
 
     def close(self):
         self.srv.shutdown()

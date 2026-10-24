@@ -8,5 +8,6 @@
     "region": "global"
   },
   "env": {},
-  "hosts": []
+  "hosts": [],
+  "allow_remote": false
 }

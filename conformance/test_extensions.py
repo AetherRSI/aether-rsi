@@ -259,7 +259,8 @@ class TwoAuthors(unittest.TestCase):
         for body in ({"core_locked": False}, {"open_with": {".md": "nobody"}}, {"open_with": {".txt": "ada.md"}},
                      {"open_with": {"md": "ada.md"}}, {"agent": "nobody"}):
             self.assertEqual(self.live.json("api/config", body)[0], 400, body)
-        self.assertFalse((self.live.data / "config.json").exists())
+        cfg = self.live.data / "config.json"
+        self.assertEqual(json.loads(cfg.read_text()) if cfg.exists() else {}, {"trusted": [str(self.ws)]})   # nothing but what the test set up
         self.assertTrue(self.live.json("api/info")[1]["locked"])
 
     def test_a_fallback_can_be_picked_only_where_it_opens(self):
@@ -325,7 +326,7 @@ class GeminiArgon(unittest.TestCase):
             encoding="utf-8",
         )
         fake.chmod(0o755)
-        env = {**os.environ, "AETHER_GEMINI": str(fake), "AETHER_GEMINI_RETRY_DELAYS": "0.01,0.02", "AETHER_BUDGET": ""}
+        env = {**os.environ, "AETHER_GEMINI": str(fake), "AETHER_GEMINI_RETRY_DELAYS": "0.01,0.02", "AETHER_BUDGET": "", "AETHER_WORKSPACE_TRUSTED": "1"}
         p = subprocess.run(
             [sys.executable, str(ag_path)],
             input=json.dumps({"prompt": "do work", "cwd": str(tmp)}) + "\n",
@@ -367,7 +368,7 @@ class GeminiArgon(unittest.TestCase):
             encoding="utf-8",
         )
         fake.chmod(0o755)
-        env = {**os.environ, "AETHER_GEMINI": str(fake), "AETHER_GEMINI_RETRY_DELAYS": "0.01,0.02", "AETHER_BUDGET": ""}
+        env = {**os.environ, "AETHER_GEMINI": str(fake), "AETHER_GEMINI_RETRY_DELAYS": "0.01,0.02", "AETHER_BUDGET": "", "AETHER_WORKSPACE_TRUSTED": "1"}
         p = subprocess.run([sys.executable, str(ag_path)], input=json.dumps({**start, "cwd": str(tmp)}) + "\n",
                            capture_output=True, text=True, env=env, timeout=10)
         self.assertEqual(p.returncode, 0, p.stderr)

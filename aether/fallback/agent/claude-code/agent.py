@@ -63,8 +63,11 @@ def main():
         out(error="claude not found: install Claude Code or set AETHER_CLAUDE")
         return
     deny = [f"{tool}(/{p}/**)" for p in start.get("protect") or [] for tool in ("Edit", "Write", "NotebookEdit")]   # "//abs/path" = absolute
+    deny += [f"{tool}(/{s})" for s in os.environ.get("AETHER_SECRETS", "").split(os.pathsep) if s for tool in ("Read", "Edit", "Write")]
+    trusted = os.environ.get("AETHER_WORKSPACE_TRUSTED") == "1"   # untrusted: the workspace's .claude/ settings, hooks, env and .mcp.json stay out
     cmd = [exe, "-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
            "--permission-mode", os.environ.get("AETHER_CLAUDE_PERMISSION", "acceptEdits"),
+           *([] if trusted else ["--setting-sources", "user", "--strict-mcp-config"]),
            *(["--settings", json.dumps({"permissions": {"deny": deny}})] if deny else []),
            *(["--model", os.environ["AETHER_CLAUDE_MODEL"]] if os.environ.get("AETHER_CLAUDE_MODEL") else []),
            *(["--resume", start["session"]] if start.get("session") else [])]
