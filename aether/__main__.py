@@ -1,5 +1,5 @@
 """python3 -m aether [--workspace DIR] [--port N] [--reload] [--no-init]   |   python3 -m aether check <extension folder>   |   python3 -m aether init [DIR]
-|   python3 -m aether trust [DIR] [--remove]
+|   python3 -m aether trust [DIR] [--remove]   |   python3 -m aether setup vertex [--project ID] [--region R] [--key FILE | --adc]
 (installed with pip, the command is `aether`). Without --workspace the core uses the folder saved from the page; a fresh install asks
 in the terminal whether to make a SampleProject (else the page asks for a folder)."""
 
@@ -14,7 +14,8 @@ import sys
 from pathlib import Path
 
 from . import VERSION, extensions
-from .server import RECENT, check_workspace, serve
+from . import settings as settings_mod
+from .server import REPO, RECENT, check_workspace, serve, source_checkout
 
 SAMPLE = Path(__file__).resolve().parent / "sample_project"   # shipped in the wheel: what `aether init` copies out
 
@@ -89,6 +90,68 @@ def trust(argv) -> int:
     return 0
 
 
+KEY_TYPES = {"service_account", "authorized_user", "external_account", "impersonated_service_account"}
+
+
+def setup(argv) -> int:
+    """`aether setup vertex`: how agents reach the models, written to settings.json from a terminal (the page only shows it).
+    No --key: the person's own sign-in (ADC: Cloud Shell, or `gcloud auth application-default login`), no key file anywhere."""
+    ap = argparse.ArgumentParser(prog="aether setup vertex", description="Set how agents reach Vertex AI (written to settings.json). "
+                                 "Without --key they use your own sign-in (ADC); refused inside an agent's job")
+    ap.add_argument("what", choices=["vertex"])
+    ap.add_argument("--project", help="the Google Cloud project that runs the models")
+    ap.add_argument("--region", help="the Vertex AI region (default: global)")
+    g = ap.add_mutually_exclusive_group()
+    g.add_argument("--key", help="a service-account key file, for a project your own sign-in cannot use")
+    g.add_argument("--adc", action="store_true", help="drop the key file: use your own sign-in")
+    ap.add_argument("--data", default=default_data())
+    a = ap.parse_args(argv)
+    if os.environ.get("AETHER_AGENT") == "1":
+        print("aether setup: refused inside an agent's job (only the person sets how agents reach the models)", file=sys.stderr)
+        return 2
+    path = settings_mod.where(REPO, Path(a.data).expanduser(), source_checkout())
+    try:
+        raw = json.loads(path.read_text()) if path.is_file() else {}
+    except ValueError as e:
+        print(f"aether setup: {path} is not JSON ({e}); fix or remove it first", file=sys.stderr)
+        return 2
+    v = dict(raw.get("vertex") or {})
+    if not (a.project or a.region or a.key or a.adc):   # no change asked: say what is set (never the key's contents)
+        how = f"key file {v['credentials']}" if v.get("credentials") else ("your own sign-in (ADC)" if v.get("project") else "not set")
+        print(f"settings: {path}\nvertex: project={v.get('project') or '-'}  region={v.get('region') or '-'}  sign-in={how}")
+        return 0
+    if a.key:
+        key = Path(a.key).expanduser().resolve()
+        try:
+            kind = json.loads(key.read_text()).get("type")
+        except (OSError, ValueError, AttributeError) as e:
+            print(f"aether setup: cannot use {key} as a key file ({type(e).__name__})", file=sys.stderr)
+            return 2
+        if kind not in KEY_TYPES:
+            print(f"aether setup: {key} is not a Google credentials file (type {kind!r})", file=sys.stderr)
+            return 2
+        v["credentials"] = str(key)
+        ws = saved_workspace(a.data)
+        if ws and (Path(ws).resolve() == key or Path(ws).resolve() in key.parents):
+            print(f"note: the key sits inside the workspace {ws}. The core never shows or serves it, but outside is safer", file=sys.stderr)
+    if a.adc:
+        v.pop("credentials", None)
+    if a.project:
+        v["project"] = a.project
+    v["region"] = a.region or v.get("region") or "global"
+    if not v.get("project"):
+        print("aether setup: --project is needed the first time", file=sys.stderr)
+        return 2
+    raw["vertex"] = v
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(raw, ensure_ascii=False, indent=2) + "\n")
+    tmp.replace(path)
+    print(f"saved {path}: project={v['project']} region={v['region']} sign-in={'key file' if v.get('credentials') else 'your own (ADC)'}"
+          "  (a running aether reads it again by itself)")
+    return 0
+
+
 def make_project(where=None) -> Path:
     """Copy the SampleProject to where (default ./SampleProject). A taken name becomes name-2, name-3 …: nothing is replaced."""
     if not SAMPLE.is_dir():
@@ -159,6 +222,8 @@ def main(argv=None):
         return init(argv[1:])
     if argv[:1] == ["trust"]:
         return trust(argv[1:])
+    if argv[:1] == ["setup"]:
+        return setup(argv[1:])
     ap = argparse.ArgumentParser(prog="aether", description=f"AetherRSI {VERSION}")
     ap.add_argument("--workspace", default=default_workspace())
     ap.add_argument("--data", default=default_data())

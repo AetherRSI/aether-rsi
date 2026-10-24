@@ -252,6 +252,14 @@ class Core:
                 return True
         return False
 
+    def vertex_state(self) -> dict:
+        """What the page may show about model access: project, region and how agents sign in ("key": a key file, "adc": the person's own
+        sign-in, "none"). Never the key's path or contents; set with `aether setup vertex` in a terminal, not from the page."""
+        env = self.settings.get()[0]["env"]
+        project = env.get("ANTHROPIC_VERTEX_PROJECT_ID") or env.get("GOOGLE_CLOUD_PROJECT") or ""
+        auth = "key" if env.get("GOOGLE_APPLICATION_CREDENTIALS") else ("adc" if project else "none")
+        return {"project": project, "region": env.get("CLOUD_ML_REGION") or "", "auth": auth}
+
     def deny(self) -> list:
         """What the file tree never shows, reads, serves or writes: the locked core and data (self.protect) and, always, the Vertex
         key ―― kept inside the workspace it would otherwise be one /api/read away from any page or agent (curl skips their tool deny)."""
@@ -320,6 +328,7 @@ class Core:
                 "workspace": self.ws.name if self.ws else "", "workspace_path": str(self.ws or ""),
                 "workspace_fixed": self.fixed, "workspace_error": self.ws_error,
                 "settings": str(self.settings.path) if self.settings.path.is_file() else "",
+                "vertex": self.vertex_state(),
                 "recent": [p for p in self.config.get("recent") or [] if isinstance(p, str) and Path(p).is_dir()],   # moved or deleted ones drop out of the list, not out of the file
                 "agent": self.default_agent(),
                 "agents": [{"id": a["id"], "label": a["label"], "icon": extensions.icon_url(a), "inject": bool(a.get("inject")), "audio": bool(a.get("audio")), "dispatch": bool(a.get("dispatch")), "disabled": a.get("disabled", ""), "spare": bool(a.get("spare"))}

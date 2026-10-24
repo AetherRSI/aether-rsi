@@ -1539,6 +1539,10 @@ function wsDialog(required) {   // the workspace folder: asked on a fresh instal
     return el("button", { type: "button", title: p, disabled: cur ? "" : null, onclick: () => use(p) },
       el("b", {}, p.slice(at + 1)), el("small", {}, el("bdi", {}, p.slice(0, at) || "/")), cur ? el("em", {}, "current") : null);
   }));
+  const v = INFO.vertex || {};   // shown, never set here: the page is an API anyone on this machine can call (aether setup vertex, in a terminal)
+  $("#wsvertex").hidden = false;
+  $("#wsvtext").textContent = v.auth === "none" ? "Not set: agents use their own defaults" :
+    `Project ${v.project} · ${v.region || "global"} · signed in with ${v.auth === "key" ? "a key file (the path stays in settings.json)" : "your own account (ADC)"}`;
   d.showModal(); inp.focus(); inp.select();
 }
 function iconizeStatic(root = document.body) {   // index.html's own words: a head emoji → its icon (once, before anything is drawn into it)
