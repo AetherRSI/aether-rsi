@@ -2,7 +2,8 @@
 
   {"extensions": ["/abs/folder", ...],                       always read, whatever the workspace (after its extensions/)
    "vertex": {"credentials": "/abs/key.json", "project": "id", "region": "global"},   handed to every agent as the env below
-   "env": {"NAME": "value"}}                                  more env for agents (wins over vertex)
+   "env": {"NAME": "value"},                                  more env for agents (wins over vertex)
+   "hosts": ["name.example"]}                                 more names the page may be opened by (a proxy in front); IP addresses and localhost always pass
 
 Read again when the file changes, so editing it needs no restart. A bad entry is skipped and reported, never fatal.
 The core passes the credentials file's path, never its contents. Keep settings.json out of git (settings.example.json is the template).
@@ -30,9 +31,15 @@ def where(repo: Path, data: Path, source_checkout: bool) -> Path:
 
 def parse(raw) -> tuple:
     """(settings, errors). settings = {"extensions": [Path], "env": {str: str}}."""
-    out, bad = {"extensions": [], "env": {}}, []
+    out, bad = {"extensions": [], "env": {}, "hosts": []}, []
     if not isinstance(raw, dict):
         return out, ["must be a JSON object"]
+    hosts = raw.get("hosts", [])
+    for h in hosts if isinstance(hosts, list) else [hosts]:
+        if isinstance(h, str) and h.strip() and not any(c in h for c in "/: "):
+            out["hosts"].append(h.strip().lower())
+        else:
+            bad.append(f"hosts: {h!r} is not a host name (no scheme, port or path)")
     ext = raw.get("extensions", [])
     for e in ext if isinstance(ext, list) else [ext]:
         p = Path(e).expanduser() if isinstance(e, str) else None

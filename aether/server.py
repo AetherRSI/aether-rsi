@@ -34,6 +34,8 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
+import ipaddress
+import os
 import re
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -198,6 +200,13 @@ class Core:
         agents = {k: a for k, a in self.ext()["agent"].items() if not a.get("disabled")}
         want = self.config.get("agent")
         return want if want in agents else (min(agents, key=lambda k: (bool(agents[k].get("spare")), k)) if agents else "")   # the workspace's own agents before a spare
+
+    def host_ok(self, host, origin) -> bool:
+        """DNS rebinding: a page of another site whose name now resolves to 127.0.0.1 sends that name as Host (and Origin), and
+        X-Aether no longer stops it (it is same-origin to the browser). Only names nobody can rebind pass ―― an IP address,
+        localhost ―― and the ones settings.json `hosts` / AETHER_HOSTS add for a proxy in front."""
+        extra = set(self.settings.get()[0].get("hosts", [])) | {h.strip().lower() for h in os.environ.get("AETHER_HOSTS", "").split(",") if h.strip()}
+        return all(allowed_host(n, extra) for n in (hostname(host), hostname(origin, url=True)) if n is not None)
 
     def need_ws(self) -> Path:
         if not self.ws:
@@ -383,6 +392,26 @@ class Core:
         return {"job": nj["id"], "injected": False, "note": "it had ended: queued next in the same conversation"}
 
 
+def hostname(value, url: bool = False):
+    """The name in a Host header (url: in an Origin), lower case, without port or brackets. None: nothing to check."""
+    if not value or value == "null":
+        return None
+    v = (urlparse(value).netloc if url else value).strip().lower()
+    if v.startswith("["):
+        return v[1:v.find("]")] if "]" in v else v
+    return v.rsplit(":", 1)[0] if v.count(":") == 1 else v
+
+
+def allowed_host(name: str, extra=()) -> bool:
+    if name == "localhost" or name in extra:
+        return True
+    try:
+        ipaddress.ip_address(name)   # a page can only send an IP as Host when it was opened by that IP: nothing to rebind
+        return True
+    except ValueError:
+        return False
+
+
 def handler(core: Core):
     class H(BaseHTTPRequestHandler):
         server_version = "AetherRSI"
@@ -422,7 +451,15 @@ def handler(core: Core):
                 ctype += "; charset=utf-8"
             self._send(200, body, ctype, sandbox)
 
+        def _host_ok(self) -> bool:
+            if core.host_ok(self.headers.get("Host"), self.headers.get("Origin")):
+                return True
+            self._json({"error": "forbidden host: open the page by 127.0.0.1 or localhost, or add the name to settings.json hosts"}, 403)
+            return False
+
         def do_GET(self):
+            if not self._host_ok():
+                return
             u = urlparse(self.path)
             path, q = unquote(u.path), {k: v[0] for k, v in parse_qs(u.query).items()}
             try:
@@ -473,6 +510,8 @@ def handler(core: Core):
                 return self._json({"error": str(e)}, 400)
 
         def do_POST(self):
+            if not self._host_ok():
+                return
             if self.headers.get("X-Aether") != "1" or self.headers.get("Origin") == "null":
                 return self._json({"error": "forbidden"}, 403)
             path = urlparse(self.path).path

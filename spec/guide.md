@@ -53,6 +53,7 @@ Copy `settings.example.json` to `settings.json` beside it (git ignores it; a pip
 | `extensions` | Folders of extensions read whatever the workspace is (after its own `extensions/`), so switching the workspace keeps your agents |
 | `vertex` | `credentials` (path of the service-account key), `project`, `region`. Every agent gets them as `GOOGLE_APPLICATION_CREDENTIALS`, `ANTHROPIC_VERTEX_PROJECT_ID` / `GOOGLE_CLOUD_PROJECT`, `CLOUD_ML_REGION` / `GOOGLE_CLOUD_LOCATION`, plus `CLAUDE_CODE_USE_VERTEX=1` and `GOOGLE_GENAI_USE_VERTEXAI=true`, even when the core was not started from your shell |
 | `env` | More environment for agents (wins over `vertex`) |
+| `hosts` | More names the page may be opened by, for a proxy in front (e.g. `["code.example.com"]`; also `AETHER_HOSTS=a,b`). IP addresses and `localhost` always pass; any other Host or Origin gets 403, so a site whose name was rebound to 127.0.0.1 cannot reach the core |
 
 The core reads it again when it changes. Only the key's path is passed, never its contents. A bad entry is skipped and shown as an error;
 while the core is locked, agents may not write the file.
@@ -140,6 +141,7 @@ clicking the folder opens that page in its own origin (through a relay the shell
 - **Extension pages never get the core's origin**: sandboxed iframes, `Content-Security-Policy: sandbox`, postMessage only.
   The core inlines a page's own scripts, styles and images, so it also works behind a login proxy (an opaque origin sends no cookies).
   A page can draft a message (`aether.send`) but only the person's click sends it.
+- **DNS rebinding is refused**: every request's Host (and Origin) must be an IP address, `localhost` or a name in `settings.json` `hosts`.
 - Binds to `127.0.0.1`. All URLs are relative, so it runs unchanged behind a reverse proxy prefix (e.g. `/proxy/8030/`).
 
 ## Tests
