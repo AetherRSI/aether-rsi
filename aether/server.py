@@ -192,7 +192,7 @@ class Core:
         self._ext, self._ext_at = None, None
         self.runner = Runner(self.store, lambda: self.ext()["agent"], self.ws, [], self.data / "logs")
         self.runner.env = self.agent_env
-        self.renders = render.Renders(self.data / "render", lambda: self.ext()["preview"], lambda rel: files.resolve(self.need_ws(), rel, self.protect),
+        self.renders = render.Renders(self.data / "render", lambda: self.ext()["preview"], lambda rel: files.resolve(self.need_ws(), rel, self.deny()),
                                       lambda: self.settings.get()[0]["env"])
         self.runner.after = self.drawn_ahead
         self.voice = voice.Voice()   # 🎙 the shell's mic ⇄ an agent with audio: true (spec §4.2)
@@ -251,6 +251,12 @@ class Core:
             if self.ws == p or p in self.ws.parents:
                 return True
         return False
+
+    def deny(self) -> list:
+        """What the file tree never shows, reads, serves or writes: the locked core and data (self.protect) and, always, the Vertex
+        key ―― kept inside the workspace it would otherwise be one /api/read away from any page or agent (curl skips their tool deny)."""
+        key = self.settings.get()[0]["env"].get("GOOGLE_APPLICATION_CREDENTIALS")
+        return [*self.protect, *([Path(key).expanduser().resolve()] if key else [])]
 
     def agent_env(self) -> dict:
         """settings.json env, plus what an agent must know: AETHER_WORKSPACE_TRUSTED ("1" only when the person trusts the workspace: an
@@ -641,7 +647,7 @@ def handler(core: Core):
                     return self._file(files.resolve(STATIC, path[len("/static/"):]), False)
                 if path.startswith("/files/"):
                     ws = core.need_ws()
-                    return self._file(files.resolve(ws, path[len("/files/"):], core.protect), True, ws, core.protect)
+                    return self._file(files.resolve(ws, path[len("/files/"):], core.deny()), True, ws, core.deny())
                 if path.startswith("/x/"):
                     xid, _, rest = path[3:].partition("/")
                     p = core.ext()["preview"].get(xid)
@@ -666,13 +672,13 @@ def handler(core: Core):
                             j["pos"] = core.store.queued_before(j["id"]) + 1
                     return self._json({"jobs": jobs, "task": core.store.task(q.get("task") or "")})
                 if path == "/api/files":
-                    return self._json(files.listing(core.need_ws(), q.get("path", ""), core.protect))
+                    return self._json(files.listing(core.need_ws(), q.get("path", ""), core.deny()))
                 if path.startswith("/api/paste/"):
                     return self._file(core.pastes.path(path.rsplit("/", 1)[1]), False)
                 if path == "/api/render/img":
                     return self._file(core.renders.image(q.get("ext", ""), q.get("path", ""), q.get("key", ""), q.get("name", "")), False)
                 if path == "/api/read":
-                    return self._json({"path": q.get("path", ""), "text": files.read(core.need_ws(), q.get("path", ""), core.protect)})
+                    return self._json({"path": q.get("path", ""), "text": files.read(core.need_ws(), q.get("path", ""), core.deny())})
                 return self._json({"error": "not found"}, 404)
             except NoWorkspace as e:
                 return self._json({"error": str(e)}, 409)
@@ -697,7 +703,7 @@ def handler(core: Core):
                 n = int(self.headers.get("Content-Length") or 0)
                 if path == "/api/upload":   # a file dropped on the explorer: the body is the file, not JSON
                     q = {k: v[0] for k, v in parse_qs(u.query).items()}
-                    return self._json({"path": files.upload(core.need_ws(), q.get("path", ""), q.get("name", ""), self.rfile, n, core.protect)})
+                    return self._json({"path": files.upload(core.need_ws(), q.get("path", ""), q.get("name", ""), self.rfile, n, core.deny())})
                 if path == "/api/paste":   # an image pasted into ③: the body is the image
                     return self._json(core.pastes.add(self.rfile, n, self.headers.get("Content-Type", "")))
                 b = json.loads(self.rfile.read(n) or b"{}") if n else {}

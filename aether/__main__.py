@@ -6,6 +6,7 @@ in the terminal whether to make a SampleProject (else the page asks for a folder
 from __future__ import annotations
 
 import argparse
+import errno
 import json
 import os
 import shutil
@@ -175,7 +176,14 @@ def main(argv=None):
             return 2
     elif not a.no_init and not saved_workspace(a.data) and sys.stdin.isatty() and sys.stdout.isatty():
         ask_init(a.data)   # saved, not passed: the page's form stays free to change it (a passed one locks it)
-    srv = serve(ws, a.data, a.host, a.port)
+    try:
+        srv = serve(ws, a.data, a.host, a.port)
+    except OSError as e:
+        if e.errno not in (errno.EADDRINUSE, errno.EACCES):
+            raise
+        why = "is in use (another aether, or another program: open it, or stop it)" if e.errno == errno.EADDRINUSE else "is not allowed here"
+        print(f"aether: port {a.port} on {a.host} {why}. Start on another one with --port {a.port + 1}", file=sys.stderr)
+        return 2
     c = srv.core
     where = c.ws or f"(not set: enter it in the page{' ― ' + c.ws_error if c.ws_error else ''})"
     print(f"AetherRSI {VERSION}  http://{a.host}:{a.port}/  workspace={where}  core {'locked 🔒' if c.locked else 'UNLOCKED 🔓'} ({c.lock_reason})", flush=True)

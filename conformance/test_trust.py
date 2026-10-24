@@ -97,6 +97,34 @@ class AgentEnv(unittest.TestCase):
         self.assertEqual(self.env_in(True)["AETHER_WORKSPACE_TRUSTED"], "1")
 
 
+class KeyInTheWorkspace(unittest.TestCase):
+    """A Vertex key kept inside the workspace is never read, served or listed (curl to /api/read would skip an agent's tool deny)."""
+
+    def setUp(self):
+        self.was = os.environ["AETHER_SETTINGS"]
+        self.file = Path(tempfile.mkdtemp()) / "settings.json"
+        os.environ["AETHER_SETTINGS"] = str(self.file)
+        self.ws = Path(tempfile.mkdtemp()).resolve()
+        (self.ws / "keys").mkdir()
+        (self.ws / "keys/sa.json").write_text('{"private_key": "x"}')
+        (self.ws / "keys/notes.txt").write_text("fine")
+        self.file.write_text(json.dumps({"vertex": {"credentials": str(self.ws / "keys/sa.json"), "project": "p"}}))
+
+    def tearDown(self):
+        os.environ["AETHER_SETTINGS"] = self.was
+
+    def test_hidden_everywhere(self):
+        live = Live(self.ws)
+        try:
+            self.assertEqual(live.call("api/read?path=keys/sa.json")[0], 403)
+            self.assertEqual(live.call("files/keys/sa.json")[0], 403)
+            names = [i["name"] for i in live.json("api/files?path=keys")[1]["items"]]
+            self.assertEqual(names, ["notes.txt"])
+            self.assertEqual(live.json("api/read?path=keys/notes.txt")[1]["text"], "fine")   # the rest of the folder is as before
+        finally:
+            live.close()
+
+
 class ClaudeAdapter(unittest.TestCase):
     """The core's Claude Code adapter: untrusted → no project/local settings and no .mcp.json; the secrets denied to its tools."""
 

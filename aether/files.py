@@ -22,9 +22,9 @@ def resolve(ws: Path, rel: str, deny=()) -> Path:
     p = (ws / rel).resolve()
     if p != ws and ws not in p.parents:
         raise Outside("outside the workspace")
-    for d in deny:   # the core and the data folder, when they sit inside the workspace and the core is locked
+    for d in deny:   # the core and the data folder (when they sit inside the workspace and the core is locked), and secrets (always)
         if p == d or d in p.parents:
-            raise Outside("the core is locked")
+            raise Outside("not shown: the locked core or a secret (the Vertex key)")
     return p
 
 
