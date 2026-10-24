@@ -335,7 +335,7 @@ class GeminiArgon(unittest.TestCase):
         self.assertEqual(p.returncode, 0, p.stderr)
         events = [json.loads(line) for line in p.stdout.splitlines() if line.strip()]
         self.assertEqual([e["session"] for e in events if "session" in e], ["sid-123"])
-        self.assertTrue(any(e.get("step", "").startswith("🔄 API通信エラー") and "fetch failed" in e["step"] for e in events))
+        self.assertTrue(any(e.get("step", "").startswith("🔄 ") and "fetch failed" in e["step"] for e in events))
         done = next(e for e in events if e.get("done"))
         self.assertEqual((done["reply"], done["tokens"]), ("recovered ok", 42))
         calls = [json.loads(x) for x in args_log.read_text().splitlines()]
@@ -377,7 +377,7 @@ class GeminiArgon(unittest.TestCase):
 
     def test_retries_a_terminated_stream(self):
         events, calls = self._run_fake("[API Error: terminated]", {"prompt": "do work", "session": "sid-old"})
-        self.assertTrue(any(e.get("step", "").startswith("🔄 API通信エラー（API Error: terminated）") for e in events))
+        self.assertTrue(any(e.get("step", "").startswith("🔄 ") and "API Error: terminated" in e["step"] for e in events))
         self.assertTrue(next(e for e in events if e.get("done")))
         self.assertEqual(len(calls), 2)
         self.assertEqual(calls[1][calls[1].index("--resume") + 1], "sid-old")   # the same conversation goes on

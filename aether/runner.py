@@ -8,6 +8,7 @@ import base64
 import json
 import os
 import re
+import secrets
 import select
 import signal
 import sqlite3
@@ -85,6 +86,7 @@ class Runner:
     def __init__(self, store, agents, workspace: Path, protect, logs: Path):
         self.store, self.agents, self.ws, self.protect, self.logs = store, agents, workspace, [str(p) for p in protect], logs
         self.env = dict   # () -> extra env for agent processes (settings.json vertex / env); the core sets it
+        self.after = lambda jid: None   # a job settled (whatever its end): the core draws the files it quoted ahead (render.py)
         self.wake = threading.Event()
         self.starting = set()   # jobs handed to a thread, until that thread ends
         self.launching = set()   # jobs between the pick and their agent process being live (a swap waits for these)
@@ -92,6 +94,13 @@ class Runner:
         self.handing = False   # a swap is taking the live jobs over: readers stop where they are
         self.live = {}   # job id -> handle (see _handle)
         self.stopping = set()
+        self.voiced = set()   # jobs sent from 🎙: their start says "audio": true (spec §4.2). In memory: a swap while one still waits forgets it
+        self.voice_out = lambda jid, ev: None   # what an agent says for the shell's ears (voice.Voice.out); the core sets it
+        self.voice_end = lambda jid, state: None   # a job settled: its mic hears the end (voice.Voice.ended)
+        self.voice_ui = lambda jid, req: False   # an agent asks the shell's screen (spec §4.4): True when a mic took it (voice.Voice.ui)
+        self.api = ""   # the core's base URL, for agents with dispatch: true (spec §4.3); the core sets it
+        self.tokens = {}   # AETHER_TOKEN -> the job it was made for (while that job runs; a swap hands them over)
+        self.sends = {}   # job id -> how many messages it dispatched
 
     def start(self, handoff=None):
         """handoff: the jobs a swap handed over (they keep running; see handoff()), by default from AETHER_HANDOFF.
@@ -148,12 +157,21 @@ class Runner:
             return
         start = {"type": "start", "aether": PROTOCOL, "prompt": job["prompt"], "session": self.store.session(job["task"], a["id"]),
                  "cwd": str(self.ws), "protect": self.protect}
+        if a.get("audio") and jid in self.voiced:
+            start["audio"] = True
+        self.voiced.discard(jid)
         self.logs.mkdir(parents=True, exist_ok=True)
+        extra, tok = {}, None
+        if a.get("dispatch") and self.api:   # spec §4.3: the core's API, with a key good for this job only
+            tok = secrets.token_urlsafe(24)
+            self.tokens[tok] = jid
+            extra = {"AETHER_API": self.api, "AETHER_TOKEN": tok}
         with open(self.logs / f"{jid}.err", "w") as err:   # the agent writes its stderr there itself (it outlives a swap)
             p = subprocess.Popen(command(a), cwd=str(self.ws), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err,
-                                 bufsize=0, start_new_session=True, env={**os.environ, **self.env()})
+                                 bufsize=0, start_new_session=True, env={**os.environ, **self.env(), **extra})
         h = self.live[jid] = self._handle(p.pid, p.stdin, p.stdout.fileno(), p.wait, bool(a.get("inject")), job["task"], a["id"])
         h["keep"] = p   # the stdout pipe lives as long as the Popen
+        h["token"] = tok
         self.launching.discard(jid)
         self._write(h, start)
         if jid in self.stopping:
@@ -191,11 +209,28 @@ class Runner:
                     self._event(jid, h, raw)
 
     def _settle(self, jid: str, h: dict):
+        try:
+            self._settle_job(jid, h)
+        finally:
+            try:
+                j = self.store.job(jid)
+                self.voice_end(jid, j["state"] if j else "gone")
+            except Exception as e:  # noqa: BLE001
+                print(f"[voice] could not tell the mic the job ended: {e!r}", file=sys.stderr, flush=True)
+            try:
+                self.after(jid)
+            except Exception as e:  # noqa: BLE001 ―― drawing ahead is a courtesy: it must not touch the job
+                print(f"[render] could not draw ahead for {jid}: {e!r}", file=sys.stderr, flush=True)
+
+    def _settle_job(self, jid: str, h: dict):
         code = h["wait"]()
         with h["lock"]:
             h["open"] = False
             self._close_in(h)
         self.live.pop(jid, None)
+        if h.get("token"):
+            self.tokens.pop(h["token"], None)
+        self.sends.pop(jid, None)
         try:
             os.close(h["out"]) if "keep" not in h else h["keep"].stdout.close()
         except OSError:
@@ -224,6 +259,23 @@ class Runner:
             self._note(self.store.add_line, jid, str(ev["step"])[:300], str(ev["full"]) if ev.get("full") else None)   # full: the step's whole text (optional)
         if ev.get("session"):
             self._note(self.store.set_session, h["task"], h["agent"], str(ev["session"]))
+        if ev.get("audio") or ev.get("heard") or ev.get("said") or ev.get("interrupted"):   # 🎙 spec §4.2: the words are kept, the sound only played
+            for k, mark in (("heard", "🎙 "), ("said", "🔊 ")):
+                if ev.get(k):
+                    t = str(ev[k]).strip()
+                    self._note(self.store.add_line, jid, (mark + t)[:300], mark + t if len(t) > 290 else None)
+            try:
+                self.voice_out(jid, ev)
+            except Exception as e:  # noqa: BLE001 ―― a broken ear must not stop the reading
+                print(f"[voice] could not pass on to the shell: {e!r}", file=sys.stderr, flush=True)
+        if isinstance(ev.get("ui"), dict):   # 🖱 spec §4.4: the shell's screen, through the mic's socket
+            try:
+                sent = self.voice_ui(jid, ev["ui"])
+            except Exception as e:  # noqa: BLE001
+                sent = False
+                print(f"[voice] could not ask the screen: {e!r}", file=sys.stderr, flush=True)
+            if not sent:
+                self._write(h, {"type": "ui", "id": ev["ui"].get("id"), "error": "no screen: the mic is not open"})
         if ev.get("error"):
             h["error"] = str(ev["error"])[:500]
         if ev.get("done"):
@@ -273,7 +325,7 @@ class Runner:
                     os.set_inheritable(fd, True)
             out.append({"job": jid, "pid": h["pid"], "in": fin, "out": h["out"], "buf": base64.b64encode(h["buf"]).decode(), "inject": h["inject"],
                         "task": h["task"], "agent": h["agent"], "done": h["done"], "error": h["error"], "open": h["open"],
-                        "stopping": jid in self.stopping})
+                        "stopping": jid in self.stopping, "token": h.get("token"), "sends": self.sends.get(jid, 0)})
         return out
 
     def release(self):
@@ -302,6 +354,10 @@ class Runner:
                                                base64.b64decode(d.get("buf") or ""), d.get("done"), d.get("error") or "", d.get("open", True))
         if d.get("stopping"):
             self.stopping.add(d["job"])
+        if d.get("token"):
+            h["token"] = d["token"]
+            self.tokens[d["token"]] = d["job"]
+            self.sends[d["job"]] = int(d.get("sends") or 0)
         self.starting.add(d["job"])
         threading.Thread(target=self.safe_run, args=({"id": d["job"]}, lambda _j: self.follow(d["job"], h)), daemon=True).start()
         return d["job"]
@@ -324,6 +380,34 @@ class Runner:
             return False
         self.store.add_line(jid, "↪ " + text[:200])
         return True
+
+    def hears(self, jid: str) -> bool:
+        """The job runs, or waits, in an agent that takes the person's voice (manifest audio)."""
+        j = self.store.job(jid)
+        a = self.agents().get(j["agent"]) if j else None
+        return bool(a and a.get("audio") and j["state"] in ("queued", "running"))
+
+    def hear(self, jid: str, pcm: bytes) -> bool:
+        """🎙 A chunk of the person's voice (PCM16 16 kHz) into the running agent. False when it cannot take it any more."""
+        h = self.live.get(jid)
+        return bool(h and pcm) and self._write(h, {"type": "audio", "data": base64.b64encode(pcm).decode()})
+
+    def bearer(self, tok: str):
+        """The running job an AETHER_TOKEN was made for, or None (spec §4.3)."""
+        jid = self.tokens.get(tok or "")
+        return jid if jid and jid in self.live else None
+
+    def ui_result(self, jid: str, m: dict) -> bool:
+        """🖱 The shell's answer to a screen request, into the agent that asked (spec §4.4)."""
+        h = self.live.get(jid)
+        ans = {"type": "ui", "id": m.get("id")}
+        ans.update({"result": m["result"]} if "result" in m else {"error": str(m.get("error") or "no answer")})
+        return bool(h) and self._write(h, ans)
+
+    def mic_end(self, jid: str) -> bool:
+        """The person closed the mic: the agent finishes the conversation (spec §4.2)."""
+        h = self.live.get(jid)
+        return bool(h) and self._write(h, {"type": "audio", "end": True})
 
     def stop(self, jid: str) -> str:
         j = self.store.job(jid)

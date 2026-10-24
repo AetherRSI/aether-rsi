@@ -20,7 +20,7 @@ import time
 from pathlib import Path
 
 CORE = Path(__file__).resolve().parent
-SKIP = {"__pycache__", "fallback"}
+SKIP = {"__pycache__", "fallback", "sample_project"}   # sample_project: what `aether init` copies out, not core code
 
 
 def stamp(root: Path = CORE) -> dict:

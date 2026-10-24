@@ -20,17 +20,19 @@
 <p class="hint" id="hint"></p>
 <ol id="doc"></ol>
 <button type="button" id="tip" title="Quote the selection" aria-label="Quote the selection" hidden>📎</button>
+<script src="aether-icons.js"></script>
 <script src="aether-sdk.js"></script>
 <script>
 // "match": ["*"] ―― the core opens here only the file types no other preview takes. "binary": true so this page decides
 // whether the bytes are text (strict UTF-8, no NUL) instead of showing a decoded jumble.
 const SHOW = 2_000_000, LINES = 20000;
 let name = "";
-const DL = { id: "dl", label: "⬇ Download", title: "Download the file", run: () => aether.download() };   // the shell's own 📎 quotes the whole file
+document.getElementById("tip").replaceChildren(mui("AttachFile"));   // one-colour icons (the shell's aether-icons.js)
+const DL = { id: "dl", icon: "Download", label: "Download", title: "Download the file", run: () => aether.download() };   // the shell's own 📎 quotes the whole file
 // Not text: ask the agent for a copy the panel can show. The page only fills ③ (the file quoted + the request); the person sends it
 const convert = (path) => () => {
   aether.quote("", "");
-  aether.send(`Convert “${path}” into a format the 📂 Files panel can preview (Markdown .md for documents and sheets, PDF when the layout matters, PNG for drawings) and save it next to the original under the same name. Keep the original.`);
+  aether.send(`Convert “${path}” into a format the Files panel can preview (Markdown .md for documents and sheets, PDF when the layout matters, PNG for drawings) and save it next to the original under the same name. Keep the original.`);
 };
 aether.on("theme", (d) => document.body.classList.toggle("dark", !!d.dark));
 aether.on("open", (d) => {
@@ -43,13 +45,13 @@ aether.on("open", (d) => {
   let text;
   try { if (head.includes(0)) throw 0; text = new TextDecoder("utf-8", { fatal: true }).decode(head, { stream: bytes.length > SHOW }); }
   catch {
-    aether.bar([{ id: "conv", label: "🔁 Convert to viewable", title: "Put a request in ③ for the agent to make a copy this panel can preview (you send it)", primary: true, run: convert(d.path) }, DL]);
-    hint.textContent = `“${name}” is not text (${bytes.length.toLocaleString()} bytes). Press 🔁 Convert to viewable to ask the agent for a copy this panel can show, quote it (📎 above), or ⬇ download it.`;
+    aether.bar([{ id: "conv", icon: "Transform", label: "Convert to viewable", title: "Put a request in ③ for the agent to make a copy this panel can preview (you send it)", primary: true, run: convert(d.path) }, DL]);
+    hint.replaceChildren(muiText(`“${name}” is not text (${bytes.length.toLocaleString()} bytes). Press {Transform} Convert to viewable to ask the agent for a copy this panel can show, quote it ({AttachFile} above), or {Download} download it.`));
     return;
   }
   const lines = text.replace(/\r\n?/g, "\n").replace(/\n$/, "").split("\n");
   const cut = bytes.length > SHOW || lines.length > LINES;
-  hint.textContent = `Click a line to quote it, or select text and press the 📎 beside it.${cut ? ` Showing the first ${Math.min(lines.length, LINES).toLocaleString()} lines.` : ""}`;
+  hint.replaceChildren(muiText(`Click a line to quote it, or select text and press the {AttachFile} beside it.${cut ? ` Showing the first ${Math.min(lines.length, LINES).toLocaleString()} lines.` : ""}`));
   doc.append(...lines.slice(0, LINES).map((l) => { const li = document.createElement("li"); li.textContent = l || " "; return li; }));
 });
 document.getElementById("doc").addEventListener("click", (e) => {

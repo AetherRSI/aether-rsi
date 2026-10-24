@@ -1,14 +1,17 @@
 """Claude Code as an AetherRSI agent: translates the agent protocol (spec/v0.1.md §4) to `claude -p --input-format stream-json`.
 
 - The prompt goes in through stdin, so ↪ Inject can add to the running conversation.
+- An image pasted into ③ (a quote "🖼 Pasted image n" with its path) goes in as an image block (user()).
 - One Claude session per task: the core hands back the session id it got from us last time (--resume).
 - When the core is locked, writes to `protect` are denied through --settings (permissions.deny). Bash can still do anything the
   permission mode allows, so the default mode is acceptEdits (no shell without asking = no shell in -p).
 Environment: AETHER_CLAUDE (path to claude) · AETHER_CLAUDE_PERMISSION (default acceptEdits) · AETHER_CLAUDE_MODEL
 """
 
+import base64
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -20,8 +23,24 @@ def out(**msg):
     print(json.dumps(msg, ensure_ascii=False), flush=True)
 
 
+PASTED = re.compile(r"^@(\d+) 🖼 [^\n]*\n> (/[^\n]+\.(png|jpg|gif|webp))$", re.M)   # a quote of an image pasted into ③ (the core's paste.py)
+MEDIA = {"png": "image/png", "jpg": "image/jpeg", "gif": "image/gif", "webp": "image/webp"}
+
+
 def user(text: str) -> str:
-    return json.dumps({"type": "user", "message": {"role": "user", "content": [{"type": "text", "text": text}]}}, ensure_ascii=False) + "\n"
+    """The message, then each pasted image it quotes as an image block: Claude sees it at once, with no Read outside the workspace.
+    One that is gone or too big for the API (5 MB in base64) stays a path in the text."""
+    content = [{"type": "text", "text": text}]
+    for m in PASTED.finditer(text):
+        p = Path(m.group(2))
+        try:
+            if p.stat().st_size > 3_750_000:
+                continue
+            data = base64.b64encode(p.read_bytes()).decode()
+        except OSError:
+            continue
+        content += [{"type": "text", "text": f"@{m.group(1)}:"}, {"type": "image", "source": {"type": "base64", "media_type": MEDIA[m.group(3)], "data": data}}]
+    return json.dumps({"type": "user", "message": {"role": "user", "content": content}}, ensure_ascii=False) + "\n"
 
 
 def step(ev: dict) -> str:

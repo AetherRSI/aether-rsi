@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import threading
 import time
@@ -18,6 +19,22 @@ create index if not exists jobs_task on jobs (task, state);
 create table if not exists sessions (task text not null, agent text not null, sid text not null, primary key (task, agent));
 create table if not exists meta (k text primary key, v integer not null);
 """
+# A reply that hands the turn back (a question, a choice to make, "tell me…"): 📋 Tasks shows its task as waiting for the person's answer
+# (2026-10-24 "one waiting for the person's answer keeps its spinner and shows it is held for a reply…"). Read from the tail only;
+# a "for you to decide" heading followed by "none" is not a question (ASKS_NONE)
+ASKS = re.compile(r"[?？]\s*$|決めて(ほしい|ください)|指示(を)?(ください|下さい|してください)|教えてください|選んでください|判断(して)?ください|返事待ち|返答待ち|お返事|"
+                  r"(して|しても|で)(よい|良い|いい)(です)?か|よろしいですか|どちら(に|を)(する|しますか|します)|どう(しますか|するか)|(始め|進め)ますか|言ってもらえれば|"
+                  r"確(認|か)めてください|\b(should i|shall i|would you like|do you want|let me know|which (one|do you))\b", re.I | re.M)
+ASKS_NONE = re.compile(r"^[\s:：）)\-・]*(なし|無し|特になし|ありません|none)", re.I)
+
+
+def asks(reply: str) -> bool:
+    """Does the reply end by asking the person something? (its last 6 lines, up to 500 characters)"""
+    lines = [x.strip().strip("*_` ") for x in (reply or "").strip().splitlines() if x.strip()]
+    tail = "\n".join(lines[-6:])[-500:]
+    return any(not ASKS_NONE.match(tail[m.end():m.end() + 30].split("こと", 1)[-1]) for m in ASKS.finditer(tail))
+
+
 STATUSES = ("doing", "done")
 JOB_STATES = ("queued", "running", "done", "failed", "stopped")
 # One task at a time per session: a running job holds its session (a task's ref up to "#", or the task itself when it has no ref),
@@ -86,16 +103,22 @@ class Store:
     # ---- tasks ----
     def tasks(self, status: str = "doing") -> list:
         """status None: every task. Each carries the state and agent of its running job, else a waiting one, else its latest ('' when it has none),
-        how many of its jobs wait in the queue, and when it last moved (last: a job's end, start or send, else the task's own time).
+        how many of its jobs wait in the queue and how many it has (turns), when it last moved (last: a job's end, start or send, else the task's own time), and
+        asks: its latest job ended done with a reply that asks the person something (see asks()).
         "doing" also brings a task marked done while one of its jobs still waits or runs: it is in progress, whatever its mark says."""
         live = "exists (select 1 from jobs where task = t.id and state in ('queued', 'running'))"
         w, a = (f"where t.status = ?{f' or {live}' if status == 'doing' else ''}", (status,)) if status else ("", ())
         pick = "from jobs where task = t.id order by case state when 'running' then 0 when 'queued' then 1 else 2 end, ts desc limit 1"   # running beats queued beats the latest one (a priority send is stamped earlier than the last one)
         with self._db() as c:
-            return [dict(r) for r in c.execute(f"select t.*, coalesce((select state {pick}), '') as job, coalesce((select agent {pick}), '') as agent,"
+            rows = [dict(r) for r in c.execute(f"select t.*, coalesce((select state {pick}), '') as job, coalesce((select agent {pick}), '') as agent,"
+                                               f" coalesce((select substr(reply, -1500) {pick}), '') as tail,"
                                                " (select count(*) from jobs where task = t.id and state = 'queued') as queued,"
+                                               " (select count(*) from jobs where task = t.id) as turns,"   # how many messages its thread holds (📋 Tasks opens one of 2 or more)
                                                " coalesce((select max(coalesce(ended, started, ts)) from jobs where task = t.id), t.ts) as last"   # the last time something happened in it (📋 Tasks › 🕘 Past sorts by it)
                                                f" from tasks t {w} order by ts", a)]
+        for r in rows:
+            r["asks"] = r["job"] == "done" and asks(r.pop("tail"))
+        return rows
 
     def task(self, tid: str):
         with self._db() as c:
@@ -167,7 +190,7 @@ class Store:
         out, pos = [], {}
         for r in rows:
             d = dict(r)
-            d["full"] = (d["text"] or "").strip()[:2000]   # the whole of what was sent: the row's tooltip (2026-10-18 「タスクオンマウスで…を表示」)
+            d["full"] = (d["text"] or "").strip()[:2000]   # the whole of what was sent: the row's tooltip (2026-10-18 "on hover over a task, show …")
             d["text"] = d["full"].splitlines()[0][:120] if d["full"] else ""
             if d["state"] == "queued":
                 k = session_of(d["ref"], d["task"])

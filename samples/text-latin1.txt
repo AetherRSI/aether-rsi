@@ -1,0 +1,1 @@
+Café in Latin-1 is not valid UTF-8, so it is treated as not text.

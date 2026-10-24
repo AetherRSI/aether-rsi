@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=62.3"]   # 62.3: "**" in package-data
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -17,7 +17,7 @@ aether = "aether.__main__:cli"
 packages = ["aether"]
 
 [tool.setuptools.package-data]
-aether = ["static/*", "fallback/*/*/*"]
+aether = ["static/*", "fallback/*/*/*", "sample_project/*", "sample_project/**/*"]   # sample_project: what `aether init` copies out
 
 [tool.setuptools.dynamic]
 version = { attr = "aether.VERSION" }

@@ -1,0 +1,15 @@
+{
+  "aether": "0.1",
+  "kind": "preview",
+  "id": "pptx-preview",
+  "label": "PowerPoint",
+  "match": [
+    ".pptx"
+  ],
+  "binary": true,
+  "entry": "index.html",
+  "render": [
+    "{python}",
+    "{dir}/render.py"
+  ]
+}

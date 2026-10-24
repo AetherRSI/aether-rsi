@@ -23,12 +23,17 @@ MACHINE_EXT = _settings.Settings(_settings.where(REPO, _DATA, source_checkout())
 os.environ["AETHER_SETTINGS"] = str(Path(tempfile.mkdtemp(prefix="aether-settings-")) / "settings.json")   # no file: the cores under test never read this machine's settings.json
 
 
+HELLO = REPO / "samples/hello-app"   # shipped with the repo, next to the preview test files in samples/
+
+
 def samples():
-    """A throwaway workspace with the sample extensions (echo-agent, the previews) and samples/hello-app, copied from where
-    they live: AETHER_SAMPLES, else the workspace saved in the data folder's config.json, else the folder holding an
-    extensions/ listed in this machine's settings.json.
-    Copied so the tests do not depend on how the real folders are laid out (extensions/ may be a link or not, hello-app may
-    sit in a sub-folder) and the core stays locked (the real workspace may contain the core). None when nothing has them."""
+    """A throwaway workspace with the sample extensions (echo-agent, the previews) and this repo's samples/hello-app.
+    The extensions are copied from where they live: AETHER_SAMPLES, else the workspace saved in the data folder's
+    config.json, else the folder holding an extensions/ listed in this machine's settings.json.
+    Copied so the tests do not depend on how the real folders are laid out (extensions/ may be a link or not) and the core
+    stays locked (the real workspace may contain the core). None when nothing has them."""
+    if not (HELLO / "aether.json").is_file():
+        return None
     try:
         saved = json.loads((_DATA / "config.json").read_text()).get("workspace")
     except (OSError, ValueError):
@@ -37,16 +42,11 @@ def samples():
         if not (c and (Path(c) / "extensions/agent/echo-agent/aether.json").is_file()):
             continue
         ext = (Path(c) / "extensions").resolve()
-        roots = [Path(c), ext.parent]
-        hello = next((h for r in roots for h in [r / "samples/hello-app", *sorted(r.glob("*/samples/hello-app"))]
-                      if (h / "aether.json").is_file()), None)
-        if hello is None:
-            continue
         ws = Path(tempfile.mkdtemp(prefix="aether-samples-"))
         atexit.register(shutil.rmtree, ws, True)
         skip = shutil.ignore_patterns("__pycache__", ".*")
         shutil.copytree(ext, ws / "extensions", ignore=skip)
-        shutil.copytree(hello, ws / "samples/hello-app", ignore=skip)
+        shutil.copytree(HELLO, ws / "samples/hello-app", ignore=skip)
         return ws
     return None
 

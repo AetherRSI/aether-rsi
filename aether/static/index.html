@@ -15,8 +15,8 @@
       <div id="subtabs" class="phd">
         <h2 class="pht">📋 Tasks</h2>
         <span id="total" class="fcount"></span>
-        <button id="tall" type="button" aria-pressed="true" aria-label="All: every task's messages" title="🧭 All ― see the messages of every task">🧭</button>
-        <button id="tclose" type="button" aria-expanded="true" aria-label="Fold the task list" title="Fold the task list to one line (▾ opens it again)">✕</button>
+        <button id="tall" type="button" aria-pressed="true" aria-label="All: every task's messages" title="All ― see the messages of every task">🧭</button>
+        <button id="tclose" type="button" aria-expanded="true" aria-label="Fold the task list" title="Fold the task list to one line (the arrow opens it again)">✕</button>
       </div>
       <div id="board"></div>
     </section>
@@ -34,7 +34,7 @@
     <div id="app-files" class="appview" hidden>
       <div class="fx">
         <aside id="ftree" tabindex="0" aria-label="Explorer">
-          <div class="fx-head"><span>EXPLORER</span><span><button type="button" id="fws" title="Change the workspace folder">⚙</button><button type="button" id="frefresh" title="Refresh">⟳</button><button type="button" id="fcollapse" title="Collapse folders">⊟</button></span></div>
+          <div class="fx-head"><span>EXPLORER</span><span><button type="button" id="fpick" hidden></button><button type="button" id="fws" title="Change the workspace folder">⚙</button><button type="button" id="frefresh" title="Refresh">⟳</button><button type="button" id="fcollapse" title="Collapse folders">⊟</button></span></div>
           <div class="fx-root" id="froot"></div>
           <div id="frows" role="tree"></div>
         </aside>
@@ -47,6 +47,7 @@
 <div id="dest" hidden></div>
 <form id="composer" aria-label="Send a message">
   <textarea id="say" rows="1" placeholder="Ask the agent… (⌘Enter to send · @ to mention a quote)"></textarea>
+  <button id="mic" type="button" hidden aria-pressed="false" aria-label="Talk"></button>
   <div id="sendbox"><button id="send" type="submit" aria-label="Send"><svg class="sico" viewBox="0 0 24 24" aria-hidden="true"><path fill="currentColor" d="M4 12l1.41 1.41L11 7.83V20h2V7.83l5.58 5.59L20 12l-8-8-8 8z"/></svg><span class="agent"></span></button><button id="send-more" type="button" aria-haspopup="menu" aria-expanded="false" aria-label="How to send" title="How to send · agent">▾</button>
     <div id="send-menu" role="menu" hidden>
       <button type="button" role="menuitem" data-mode="first">⏫ Priority send<small>Next in the queue (after the job that is running)</small></button>
@@ -59,7 +60,7 @@
 <dialog id="wsdlg" aria-labelledby="wsdlg-h">
   <form id="wsform">
     <h2 id="wsdlg-h">📂 Workspace folder</h2>
-    <p>The folder 📂 Files shows and agents work in. Agents may read and write anything inside it, so pick a project folder, not your home.</p>
+    <p>The folder the Files panel shows and agents work in. Agents may read and write anything inside it, so pick a project folder, not your home.</p>
     <label for="wspath">Absolute path</label>
     <input id="wspath" type="text" autocomplete="off" spellcheck="false" placeholder="~/work/my-project  or  /absolute/path/to/my-project">
     <p id="wsnote" hidden></p>
@@ -76,6 +77,8 @@
     <div class="wsrow"><button value="no" id="okno">Cancel</button><button value="ok" id="okyes">Send anyway</button></div>
   </form>
 </dialog>
+<script src="static/icons.js"></script>
+<script src="static/aether-sdk.js"></script>
 <script src="static/core.js"></script>
 </body>
 </html>

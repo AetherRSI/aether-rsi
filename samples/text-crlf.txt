@@ -1,0 +1,3 @@
+Windows line endings (CRLF).
+Each line still becomes one row.
+日本語の行

@@ -15,13 +15,22 @@
   POST /api/jobs/<id>/stop    stop a queued or running job
   POST /api/jobs/<id>/move    {before?}  a queued job moves just before another queued job of its session (before: its id), or last (none) ―― the order it runs in
                               (409 once it, or one it passes, runs or ended; 400 when before is not one of its session's queued jobs)
+  POST /api/jobs/<id>/audio   → {ticket}: 🎙 single use, 30 s, for GET /api/jobs/<id>/audio?ticket= (Upgrade: websocket) ―― the person's voice to the
+                              job's agent and its voice back (manifest audio: true, spec §4.2; POST /api/send voice: true starts a job for it)
   POST /api/jobs/<id>/parallel  {confirm?}  ⚡ a queued job leaves its busy session for a new task of its own and starts now (409 once it runs or ended; 409 conflict as for send)
   POST /api/config            {agent?, open_with?, workspace?}  the person's choices (shared keys only; core_locked is not one)
   GET  /api/files?path=       one folder of the workspace (409 until a workspace is set)
   GET  /api/read?path=        one text file of the workspace
+  POST /api/upload?path=&name=  the raw body becomes a file of the workspace folder path (made when missing; a taken name becomes "name (2).ext") → {path}
+  POST /api/paste             the raw body (Content-Type image/png|jpeg|gif|webp) is an image pasted into ③, kept outside the workspace (paste.py) → {name, path}
+  GET  /api/paste/<name>      that image (the chip's thumbnail) · POST /api/paste/<name>/drop  ✕ on its chip → {dropped} (false while a message quotes it)
+  POST /api/render            {ext, path, force?, wait?, page?, width?}  pages a preview draws (manifest render, see render.py) → {state, running, error, key, dir, pages}
+                              (page + width: that page drawn larger → {key, name, file}). wait: answer when the render ends
+  GET  /api/render/img?ext=&path=&key=&name=  one drawn page (name p-N.png or wW/p-N.png)
   GET  /files/<path>          raw workspace file (apps run from here)
   GET  /x/<id>/<path>         raw extension file (previews run from here)
   GET  …/aether-sdk.js        the extension SDK, next to any entry
+  GET  …/aether-icons.js      the shell's Material icons (mui("Name"), muiLead, muiText), next to any entry
 
 POST needs the header `X-Aether: 1` (a cross-origin page or a sandboxed frame cannot send it without a preflight we never answer).
 Files under /files and /x are served with `Content-Security-Policy: sandbox allow-scripts allow-modals` (modals: print), so they never run with the core's origin.
@@ -42,12 +51,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
-from . import PROTOCOL, VERSION, extensions, files, settings
+from . import PROTOCOL, VERSION, extensions, files, paste, render, settings, voice
 from .runner import Runner, append, compose, quotes_of
 from .store import Store, session_of
 
 CORE = Path(__file__).resolve().parent
 STATIC = CORE / "static"
+PAGE_SHARED = {"aether-sdk.js": "aether-sdk.js", "aether-icons.js": "icons.js"}   # what any page may load from beside its entry (2026-10-24: the icons too, so a preview draws the same one-colour icons)
 SPARE = CORE / "fallback"   # extensions shipped with the core (claude-code, text-preview), used only for an id no other folder has
 REPO = CORE.parent
 
@@ -94,6 +104,13 @@ RECENT = 10   # config `recent`: the workspaces used last, newest first. The cor
 
 class Started(Exception):
     """The message to edit has left the queue (it runs or ended): nothing was changed (409)."""
+
+
+class Forbidden(Exception):
+    """An agent's dispatch the core refuses (spec §4.3): 403."""
+
+
+DISPATCH_MAX = 20   # sends per job (spec §4.3)
 
 
 class Conflict(Exception):
@@ -175,6 +192,14 @@ class Core:
         self._ext, self._ext_at = None, None
         self.runner = Runner(self.store, lambda: self.ext()["agent"], self.ws, [], self.data / "logs")
         self.runner.env = self.agent_env
+        self.renders = render.Renders(self.data / "render", lambda: self.ext()["preview"], lambda rel: files.resolve(self.need_ws(), rel, self.protect),
+                                      lambda: self.settings.get()[0]["env"])
+        self.runner.after = self.drawn_ahead
+        self.voice = voice.Voice()   # 🎙 the shell's mic ⇄ an agent with audio: true (spec §4.2)
+        self.runner.voice_out, self.runner.voice_end = self.voice.out, self.voice.ended
+        self.runner.voice_ui = self.voice.ui
+        self.pastes = paste.Pastes(self.data / "paste", lambda: [j["prompt"] for j in self.store.queue()])
+        self.pastes.sweep()
         self.relock()
 
     def relock(self):
@@ -250,6 +275,26 @@ class Core:
         want = self.config.get("agent")
         return want if want in agents else (min(agents, key=lambda k: (bool(agents[k].get("spare")), k)) if agents else "")   # the workspace's own agents before a spare
 
+    def drawn_ahead(self, jid: str):
+        """A job ended: the files it quoted that their preview draws (manifest `render`) are drawn now, before anyone opens them ――
+        the agent probably changed them. Only what is not drawn for the file as it is now. And the pasted images nothing needs any more go."""
+        try:
+            self.pastes.sweep()
+        except OSError:
+            pass
+        j = self.store.job(jid)
+        if not j or not self.ws:
+            return
+        previews, ow = self.ext()["preview"], self.config.get("open_with") or {}
+        for rel in paths_of(j["prompt"]):
+            x = Path(rel).suffix.lower()
+            pid = ow[x] if ow.get(x) in previews else next((k for k, p in previews.items() if x in p["match"]), None)
+            if pid and previews[pid].get("render"):
+                try:
+                    self.renders.request(pid, rel)
+                except (ValueError, OSError):   # a folder, gone, outside the workspace: nothing to draw
+                    pass
+
     def host_ok(self, host, origin) -> bool:
         """DNS rebinding: a page of another site whose name now resolves to 127.0.0.1 sends that name as Host (and Origin), and
         X-Aether no longer stops it (it is same-origin to the browser). Only names nobody can rebind pass ―― an IP address,
@@ -270,9 +315,9 @@ class Core:
                 "settings": str(self.settings.path) if self.settings.path.is_file() else "",
                 "recent": [p for p in self.config.get("recent") or [] if isinstance(p, str) and Path(p).is_dir()],   # moved or deleted ones drop out of the list, not out of the file
                 "agent": self.default_agent(),
-                "agents": [{"id": a["id"], "label": a["label"], "icon": extensions.icon_url(a), "inject": bool(a.get("inject")), "disabled": a.get("disabled", ""), "spare": bool(a.get("spare"))}
+                "agents": [{"id": a["id"], "label": a["label"], "icon": extensions.icon_url(a), "inject": bool(a.get("inject")), "audio": bool(a.get("audio")), "dispatch": bool(a.get("dispatch")), "disabled": a.get("disabled", ""), "spare": bool(a.get("spare"))}
                            for a in e["agent"].values()],
-                "previews": [{"id": p["id"], "label": p["label"], "match": p["match"], "entry": p["entry"], "binary": bool(p.get("binary")), "spare": bool(p.get("spare"))}
+                "previews": [{"id": p["id"], "label": p["label"], "match": p["match"], "entry": p["entry"], "binary": bool(p.get("binary")), "render": bool(p.get("render")), "spare": bool(p.get("spare"))}
                              for p in e["preview"].values()],
                 "open_with": self.config.get("open_with") or {}, "errors": e["errors"]}
 
@@ -337,10 +382,13 @@ class Core:
         if hits:
             raise Conflict(hits)
 
-    def send(self, b: dict) -> dict:
+    def send(self, b: dict, by: str = None) -> dict:
+        """by: the running job of an agent with dispatch: true that sends it with its AETHER_TOKEN (spec §4.3)."""
         text = str(b.get("text") or "").strip()
         if not text:
             raise ValueError("nothing to send")
+        if by:
+            return self.dispatch(b, text, by)
         for how in ("append", "edit"):
             if b.get(how):
                 return self.rewrite(how, str(b[how]), text, b.get("quotes"), b.get("confirm"))
@@ -360,6 +408,8 @@ class Core:
             raise ValueError(f"no agent {agent!r}")
         if a.get("disabled"):
             raise ValueError(a["disabled"])
+        if b.get("voice") and not a.get("audio"):
+            raise ValueError(f"{a['label']} does not take voice (its manifest has no audio: true)")
         task = self.store.task(str(b.get("task") or ""))
         if b.get("task") and not task:
             raise ValueError("no such task")
@@ -371,13 +421,59 @@ class Core:
             self.check(prompt, None, confirm=b.get("confirm"))   # every running job counts then, the busy session's included
             t = self.store.add_task(text.splitlines()[0])
             j = self.store.add_job(t["id"], text, prompt, agent)
+            self.voiced(j, b)
             self.runner.wake.set()
             return {"job": j["id"], "task": t, "parallel": True}
         self.check(prompt, task and task["id"], str(b.get("ref") or ""), b.get("confirm"))
         task = task or self.store.add_task(text.splitlines()[0], str(b.get("ref") or ""))   # no task: a new one ―― a parallel send is that already
         j = self.store.add_job(task["id"], text, prompt, agent, first=first)
+        self.voiced(j, b)
         self.runner.wake.set()
         return {"job": j["id"], "task": task}
+
+    def dispatch(self, b: dict, text: str, by: str) -> dict:
+        """An agent hands work to another agent (spec §4.3): as the person would send it, minus voice and the approval (a conflict is
+        the agent's to report, 409). Not to an agent that dispatches too (no chains), and up to DISPATCH_MAX sends per job."""
+        if b.get("append") or b.get("edit") or b.get("voice") or b.get("confirm"):
+            raise Forbidden("an agent may send, or inject into a running job; not append, edit, voice or confirm")
+        me = self.store.job(by)
+        mine = me and session_of((self.store.task(me["task"]) or {}).get("ref", ""), me["task"])   # its own session waits for it to end
+        if b.get("inject"):
+            j = self.store.job(str(b["inject"]))
+            if j and session_of((self.store.task(j["task"]) or {}).get("ref", ""), j["task"]) == mine:
+                raise Forbidden("not into a job of its own session: it would wait for this job to end")
+            target = j and self.ext()["agent"].get(j["agent"])
+        else:
+            t = self.store.task(str(b.get("task") or ""))
+            if t and session_of(t["ref"], t["id"]) == mine:   # queued behind itself it would not run until the talk ends: a task of its own
+                b = {k: v for k, v in b.items() if k not in ("task", "parallel", "first")}
+            target = self.ext()["agent"].get(str(b.get("agent") or "") or self.default_agent())
+        if target and target.get("dispatch"):
+            raise Forbidden(f"{target['label']} dispatches too: no chains of agents sending to agents")
+        n = self.runner.sends.get(by, 0)
+        if n >= DISPATCH_MAX:
+            raise Forbidden(f"this job has sent {DISPATCH_MAX} messages already")
+        r = self.send({k: v for k, v in b.items() if k in ("text", "agent", "task", "quotes", "inject", "first", "parallel")})
+        self.runner.sends[by] = n + 1
+        label = target["label"] if target else str(b.get("agent") or "")
+        try:
+            self.store.add_line(by, f"📨 {label}: {text[:200]}", f"📨 {label}: {text}" if len(text) > 200 else None)
+        except Exception:  # noqa: BLE001 ―― the step is a courtesy
+            pass
+        return r
+
+    def voiced(self, j: dict, b: dict):
+        """Sent from 🎙 (voice: true): its agent hears in start that the person is about to speak (spec §4.2)."""
+        if b.get("voice"):
+            self.runner.voiced.add(j["id"])
+
+    def mic_ticket(self, jid: str) -> dict:
+        """🎙 A single-use ticket for the WebSocket of one job's mic (a page cannot set X-Aether on a WebSocket; this POST needs it)."""
+        if not self.store.job(jid):
+            raise LookupError("no such job")
+        if not self.runner.hears(jid):
+            raise Started("this job does not take voice now (it has ended, or its agent has no audio: true)")
+        return {"ticket": self.voice.ticket(jid)}
 
     def busy(self, task: dict) -> bool:
         """Its session runs or queues a job, so a message sent there would wait (one task per session)."""
@@ -491,14 +587,30 @@ def handler(core: Core):
             if root is not None and ctype == "text/html":
                 def near(url):
                     q = (p.parent / url).resolve()
-                    if not q.is_file() and q.name == "aether-sdk.js":
-                        return STATIC / "aether-sdk.js"
+                    if not q.is_file() and q.name in PAGE_SHARED:
+                        return STATIC / PAGE_SHARED[q.name]
                     inside = (q == root or root in q.parents) and not any(q == d or d in q.parents for d in deny)
                     return q if inside and q.is_file() else None
                 body = bundle(body.decode("utf-8", errors="replace"), near).encode()
             if ctype.startswith("text/") or ctype in ("application/javascript", "application/json"):
                 ctype += "; charset=utf-8"
             self._send(200, body, ctype, sandbox)
+
+        def _mic(self, jid: str, ticket: str):
+            """🎙 GET /api/jobs/<id>/audio?ticket= with Upgrade: websocket → 101, then the mic runs on this thread (voice.py)."""
+            key = self.headers.get("Sec-WebSocket-Key", "")
+            if self.headers.get("Upgrade", "").lower() != "websocket" or not key:
+                return self._json({"error": "a WebSocket upgrade is needed"}, 400)
+            if self.headers.get("Origin") == "null" or not core.voice.redeem(jid, ticket):
+                return self._json({"error": "forbidden"}, 403)
+            self.send_response(101)
+            self.send_header("Upgrade", "websocket")
+            self.send_header("Connection", "Upgrade")
+            self.send_header("Sec-WebSocket-Accept", voice.accept(key))
+            self.end_headers()
+            self.wfile.flush()
+            self.close_connection = True
+            core.voice.serve(voice.Socket(self.rfile, self.wfile), jid, core.runner, core.store)
 
         def _host_ok(self) -> bool:
             if not core.peer_ok(self.client_address[0]):
@@ -515,8 +627,10 @@ def handler(core: Core):
             u = urlparse(self.path)
             path, q = unquote(u.path), {k: v[0] for k, v in parse_qs(u.query).items()}
             try:
-                if path.endswith("/aether-sdk.js") and (path.startswith("/x/") or path.startswith("/files/")):
-                    return self._file(STATIC / "aether-sdk.js", False)
+                if path.startswith("/api/jobs/") and path.endswith("/audio"):
+                    return self._mic(path.split("/")[3], q.get("ticket", ""))
+                if path.rsplit("/", 1)[-1] in PAGE_SHARED and (path.startswith("/x/") or path.startswith("/files/")):
+                    return self._file(STATIC / PAGE_SHARED[path.rsplit("/", 1)[-1]], False)
                 if path == "/":
                     return self._file(STATIC / "index.html", False)
                 if path.startswith("/static/"):
@@ -549,6 +663,10 @@ def handler(core: Core):
                     return self._json({"jobs": jobs, "task": core.store.task(q.get("task") or "")})
                 if path == "/api/files":
                     return self._json(files.listing(core.need_ws(), q.get("path", ""), core.protect))
+                if path.startswith("/api/paste/"):
+                    return self._file(core.pastes.path(path.rsplit("/", 1)[1]), False)
+                if path == "/api/render/img":
+                    return self._file(core.renders.image(q.get("ext", ""), q.get("path", ""), q.get("key", ""), q.get("name", "")), False)
                 if path == "/api/read":
                     return self._json({"path": q.get("path", ""), "text": files.read(core.need_ws(), q.get("path", ""), core.protect)})
                 return self._json({"error": "not found"}, 404)
@@ -564,16 +682,29 @@ def handler(core: Core):
         def do_POST(self):
             if not self._host_ok():
                 return
+            u = urlparse(self.path)
+            path, by = u.path, None
             if self.headers.get("X-Aether") != "1" or self.headers.get("Origin") == "null":
-                return self._json({"error": "forbidden"}, 403)
-            path = urlparse(self.path).path
+                tok = (self.headers.get("Authorization") or "").removeprefix("Bearer ").strip()   # an agent's AETHER_TOKEN (spec §4.3)
+                by = core.runner.bearer(tok) if tok and self.headers.get("Origin") is None else None
+                if not by or not (path == "/api/send" or (path.startswith("/api/jobs/") and path.endswith("/stop"))):
+                    return self._json({"error": "forbidden"}, 403)
             try:
                 n = int(self.headers.get("Content-Length") or 0)
+                if path == "/api/upload":   # a file dropped on the explorer: the body is the file, not JSON
+                    q = {k: v[0] for k, v in parse_qs(u.query).items()}
+                    return self._json({"path": files.upload(core.need_ws(), q.get("path", ""), q.get("name", ""), self.rfile, n, core.protect)})
+                if path == "/api/paste":   # an image pasted into ③: the body is the image
+                    return self._json(core.pastes.add(self.rfile, n, self.headers.get("Content-Type", "")))
                 b = json.loads(self.rfile.read(n) or b"{}") if n else {}
                 if not isinstance(b, dict):
                     raise ValueError("body must be an object")
                 if path == "/api/send":
-                    return self._json(core.send(b))
+                    return self._json(core.send(b, by))
+                if path == "/api/render":
+                    a = (str(b.get("ext") or ""), str(b.get("path") or ""))
+                    return self._json(core.renders.request(*a, force=b.get("force") is True, wait=b.get("wait") is True,
+                                                           page=int(b.get("page") or 0), width=int(b.get("width") or 0)))
                 if path == "/api/config":
                     return self._json(core.set_config(b))
                 if path == "/api/tasks":
@@ -583,18 +714,26 @@ def handler(core: Core):
                     if not core.store.task(tid):
                         return self._json({"error": "no such task"}, 404)
                     return self._json(core.store.update_task(tid, b.get("title"), b.get("status"), b.get("ref")))
+                if path.startswith("/api/paste/") and path.endswith("/drop"):
+                    return self._json({"dropped": core.pastes.drop(path.split("/")[3])})
                 if path.startswith("/api/jobs/") and path.endswith("/stop"):
                     return self._json({"state": core.runner.stop(path.split("/")[3])})
                 if path.startswith("/api/jobs/") and path.endswith("/move"):
                     return self._json(core.move(path.split("/")[3], b.get("before") or None))
                 if path.startswith("/api/jobs/") and path.endswith("/parallel"):
                     return self._json(core.parallel(path.split("/")[3], b.get("confirm")))
+                if path.startswith("/api/jobs/") and path.endswith("/audio"):
+                    return self._json(core.mic_ticket(path.split("/")[3]))
                 return self._json({"error": "not found"}, 404)
             except Conflict as e:
                 return self._json({"error": str(e), "conflict": e.hits}, 409)
             except (NoWorkspace, Started) as e:
                 return self._json({"error": str(e)}, 409)
-            except LookupError as e:
+            except Forbidden as e:
+                return self._json({"error": str(e)}, 403)
+            except files.Outside as e:
+                return self._json({"error": str(e)}, 403)
+            except (LookupError, FileNotFoundError) as e:
                 return self._json({"error": str(e)}, 404)
             except ValueError as e:
                 return self._json({"error": str(e)}, 400)
@@ -608,6 +747,7 @@ def serve(workspace, data, host="127.0.0.1", port=8030, worker=True):
         core.runner.start()
     srv = ThreadingHTTPServer((host, port), handler(core))
     srv.daemon_threads = True
+    core.runner.api = f"http://{'127.0.0.1' if host in ('', '0.0.0.0', '::') else host}:{srv.server_address[1]}/"   # for agents with dispatch: true
     srv.core = core
     return srv
 

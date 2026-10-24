@@ -1,16 +1,21 @@
 """The core: path guard, prompt composition, and the HTTP API driven end to end through the echo agent."""
 
+import io
 import json
 import os
 import tempfile
 import time
 import unittest
+import urllib.error
+import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from conformance.helpers import NO_SAMPLES, REPO, SAMPLES, Live
 from aether import files
 from aether.runner import append, compose, quotes_of
 from aether.server import bundle, lock_state
+from aether.store import asks
 
 
 class Guard(unittest.TestCase):
@@ -58,6 +63,17 @@ class Compose(unittest.TestCase):
         self.assertEqual(append("hi", "hi", "more", []), ("hi\n\nmore", "hi\n\nmore"))
 
 
+
+class Asks(unittest.TestCase):
+    """📋 Tasks › 👀 To review: a reply that ends by asking the person something shows its task as waiting for an answer."""
+    def test_asks(self):
+        for r in ["どちらにするか指示をください。", "…に直してよいですか。", "## 決めてほしいこと\n- A か B か", "何から始めますか？\n\n- a\n- b\n\nやりたいことを一言いただければ着手します。", "Should I go on?"]:
+            self.assertTrue(asks(r), r)
+
+    def test_does_not_ask(self):
+        for r in ["", "済（20/20）", "## 決めてほしいこと\n- なし", "投げた子: なし（葉）", "質問？\n" + "\n".join(f"行{i}" for i in range(8))]:   # a question far above the end is not the last word
+            self.assertFalse(asks(r), r)
+
 class Bundle(unittest.TestCase):
     def test_inlines_only_local_files(self):
         d = Path(tempfile.mkdtemp()).resolve()
@@ -88,7 +104,7 @@ class Api(unittest.TestCase):
         self.assertEqual(code, 200)
         self.assertTrue(i["locked"])
         self.assertEqual(i["protocol"], "0.1")
-        self.assertEqual({a["id"] for a in i["agents"]}, {"claude-code", "echo-agent", "gemini-argon"})
+        self.assertEqual({a["id"] for a in i["agents"]}, {"claude-code", "echo-agent", "gemini-argon", "gemini-live"})
         self.assertEqual(i["errors"], [])
 
     def test_post_needs_header(self):
@@ -127,6 +143,8 @@ class Api(unittest.TestCase):
         _, r2 = self.live.json("api/send", {"text": "one more", "agent": "echo-agent", "task": tid})
         self.assertEqual(self.live.json(f"api/jobs?task={tid}")[1]["task"]["status"], "doing")
         self.live.wait_job(r2["job"])
+        t = next(x for x in self.live.json("api/tasks?all=1")[1] if x["id"] == tid)
+        self.assertEqual(t["turns"], 2)   # 📋 Tasks lists a thread of 2 or more under its row
 
     def test_a_step_cut_short_keeps_its_whole_text(self):
         """agent → core {"step", "full"}: the line stays short, the whole text is kept beside it (fulls: {line index: text}) for the shell's …"""
@@ -524,6 +542,10 @@ class Api(unittest.TestCase):
         self.assertIn(b"window.aether", body)
         for name in (b"bar(", b"fullscreen("):   # a page's own controls in the shell's bar (spec 3.1)
             self.assertIn(name, body)
+        code, _, body = self.live.call("x/md-preview/aether-icons.js")   # the shell's one-colour icons, beside any entry (spec 3)
+        self.assertEqual(code, 200)
+        for name in (b"function mui(", b"function muiText(", b"AttachFile:"):
+            self.assertIn(name, body)
         self.assertEqual(self.live.call("x/md-preview/../../../aether/server.py")[0], 403)
         self.assertEqual(self.live.call("files/../aether/server.py")[0], 403)
 
@@ -668,12 +690,63 @@ class Workspace(unittest.TestCase):
             fixed.close()
 
 
+class Upload(unittest.TestCase):
+    """Files dropped on the explorer: written into the workspace, never over another file, never outside it or into the locked core."""
+
+    def setUp(self):
+        self.ws = Path(tempfile.mkdtemp()).resolve()
+        (self.ws / "a.md").write_text("old")
+        self.live = Live(str(self.ws))
+
+    def tearDown(self):
+        self.live.close()
+
+    def put(self, folder, name, data=b"new", headers=None):
+        q = f"api/upload?path={urllib.parse.quote(folder)}&name={urllib.parse.quote(name)}"
+        h = {"Content-Type": "application/octet-stream", "X-Aether": "1", **(headers or {})}
+        try:
+            with urllib.request.urlopen(urllib.request.Request(f"http://127.0.0.1:{self.live.port}/{q}", data, h), timeout=10) as r:
+                return r.status, json.loads(r.read())
+        except urllib.error.HTTPError as e:
+            return e.code, json.loads(e.read())
+
+    def test_writes_without_replacing(self):
+        self.assertEqual(self.put("", "b.png", b"\x89PNG"), (200, {"path": "b.png"}))
+        self.assertEqual((self.ws / "b.png").read_bytes(), b"\x89PNG")
+        self.assertEqual(self.put("", "a.md"), (200, {"path": "a (2).md"}))
+        self.assertEqual(self.put("", "a.md"), (200, {"path": "a (3).md"}))
+        self.assertEqual((self.ws / "a.md").read_text(), "old")
+        self.assertEqual(self.put("photos/2026", "日本語 名.txt"), (200, {"path": "photos/2026/日本語 名.txt"}))   # a dropped folder: made on the way
+        self.assertEqual(self.put("", ".env")[1]["path"], ".env")
+        self.assertEqual(self.put("", ".env")[1]["path"], ".env (2)")
+        self.assertEqual(self.put("", "empty.txt", b"")[1]["path"], "empty.txt")
+        self.assertEqual(sorted(p.name for p in self.ws.iterdir() if "aether-upload" in p.name), [])   # no temp file left
+
+    def test_refuses(self):
+        for folder, name in (("..", "x.txt"), ("/tmp", "x.txt"), ("", "../x.txt"), ("", "a/b.txt"), ("", ".."), ("", ""), ("", ".DS_Store")):
+            self.assertIn(self.put(folder, name)[0], (400, 403), (folder, name))
+        out = Path(tempfile.mkdtemp()).resolve()
+        (self.ws / "link").symlink_to(out)
+        self.assertEqual(self.put("link", "x.txt")[0], 403)
+        self.assertEqual(list(out.iterdir()), [])
+        self.assertEqual(self.put("", "x.txt", headers={"X-Aether": ""})[0], 403)   # a page that cannot send X-Aether cannot write
+        self.assertFalse((self.ws / "x.txt").exists())
+        core = self.ws / "core"
+        core.mkdir()
+        with self.assertRaises(files.Outside):
+            files.upload(self.ws, "core/sub", "x.txt", io.BytesIO(b"x"), 1, deny=(core,))
+        self.assertFalse((core / "sub").exists())
+        with self.assertRaises(ValueError):   # the body ended early: nothing is kept
+            files.upload(self.ws, "", "cut.txt", io.BytesIO(b"abc"), 10)
+        self.assertEqual([p.name for p in self.ws.iterdir() if "cut" in p.name], [])
+
+
 class Install(unittest.TestCase):
     """pip install aether-rsi: the shell ships inside the package; the workspace is set in the page (or --workspace), never your home."""
 
     def test_static_is_package_data(self):
         text = (REPO / "pyproject.toml").read_text()
-        self.assertIn('aether = ["static/*", "fallback/*/*/*"]', text)
+        self.assertIn('aether = ["static/*", "fallback/*/*/*", "sample_project/*", "sample_project/**/*"]', text)
         self.assertFalse([p for p in (REPO / "aether/static").iterdir() if p.is_dir()])  # static/* is not recursive
         spare = [p for p in (REPO / "aether/fallback").rglob("*") if p.is_file() and "__pycache__" not in p.parts]
         self.assertTrue(spare)

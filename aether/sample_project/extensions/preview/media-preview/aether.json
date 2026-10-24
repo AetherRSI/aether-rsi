@@ -1,0 +1,11 @@
+{
+  "aether": "0.1",
+  "kind": "preview",
+  "id": "media-preview",
+  "label": "Media",
+  "match": [".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".bmp", ".ico", ".svg", ".apng",
+            ".mp4", ".m4v", ".webm", ".mov", ".ogv",
+            ".mp3", ".wav", ".ogg", ".oga", ".opus", ".m4a", ".aac", ".flac", ".weba"],
+  "binary": true,
+  "entry": "index.html"
+}

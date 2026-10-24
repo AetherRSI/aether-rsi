@@ -1,0 +1,8 @@
+{
+  "aether": "0.1",
+  "kind": "preview",
+  "id": "json-preview",
+  "label": "JSON",
+  "match": [".json"],
+  "entry": "index.html"
+}

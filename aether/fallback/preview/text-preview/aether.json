@@ -2,7 +2,7 @@
   "aether": "0.1",
   "kind": "preview",
   "id": "text-preview",
-  "label": "📄 Plain text",
+  "label": "Plain text",
   "match": ["*"],
   "binary": true,
   "entry": "index.html"

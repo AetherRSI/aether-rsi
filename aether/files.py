@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from .extensions import app_of
@@ -65,3 +66,41 @@ def read(ws: Path, rel: str, deny=()) -> str:
     if p.stat().st_size > MAX_READ:
         raise ValueError("file is larger than 2 MB")
     return p.read_text(encoding="utf-8", errors="replace")
+
+
+MAX_UPLOAD = 500_000_000
+
+
+def upload(ws: Path, folder: str, name: str, body, size: int, deny=()) -> str:
+    """A file dropped on the tree: written into folder (made when missing) without replacing anything ―― a name already taken
+    becomes "name (2).ext". body is read in chunks into a hidden temp file first, so a broken upload leaves nothing behind."""
+    if not name or name in (".", "..") or "/" in name or "\\" in name or "\x00" in name:
+        raise ValueError("a file name, without folders")
+    if name in HIDDEN:
+        raise ValueError(f"{name} is not shown in the tree")
+    if size > MAX_UPLOAD:
+        raise ValueError(f"file is larger than {MAX_UPLOAD // 1_000_000} MB")
+    d = resolve(ws, folder, deny)
+    d.mkdir(parents=True, exist_ok=True)
+    d = resolve(ws, folder, deny)   # again: a link made meanwhile must not lead outside
+    tmp = d / f".{name}.aether-upload"
+    try:
+        with open(tmp, "xb") as f:
+            left = size
+            while left > 0:
+                chunk = body.read(min(left, 1 << 20))
+                if not chunk:
+                    raise ValueError("the upload stopped before its end")
+                f.write(chunk)
+                left -= len(chunk)
+        stem, dot, ext = name.rpartition(".") if "." in name.lstrip(".") else (name, "", "")
+        for i in range(1, 1000):
+            p = d / (name if i == 1 else f"{stem} ({i}){dot}{ext}")
+            try:
+                os.link(tmp, p)   # fails when the name is taken: nothing is replaced, even by two drops at once
+                return str(p.relative_to(ws))
+            except FileExistsError:
+                continue
+        raise ValueError("too many files with this name")
+    finally:
+        tmp.unlink(missing_ok=True)

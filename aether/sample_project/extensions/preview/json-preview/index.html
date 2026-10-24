@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; padding: 12px 16px 60px; }
+  body.dark { background: #15171c; color: #e6e7ea; }
+  .hint { font: 12px system-ui, sans-serif; color: #888; margin: 0 0 8px; }
+  details { margin-left: 16px; } summary { margin-left: -16px; list-style-position: outside; }
+  .row { margin-left: 16px; }
+  .row, summary { overflow-wrap: anywhere; }   /* a long string wraps instead of widening the page */
+  [data-p] { cursor: pointer; border-radius: 4px; padding: 0 3px; }
+  [data-p]:hover { background: rgba(99, 102, 241, .14); }
+  .k { color: #7c3aed; } .s { color: #15803d; } .n { color: #b45309; } .b { color: #2563eb; } .z, .c { color: #888; }
+  body.dark .k { color: #c4b5fd; } body.dark .s { color: #86efac; } body.dark .n { color: #fcd34d; } body.dark .b { color: #93c5fd; }
+  .err { font-family: system-ui, sans-serif; color: #b91c1c; }
+  pre { white-space: pre-wrap; word-break: break-all; }
+</style>
+</head>
+<body>
+<p class="hint">Click a key or a value to quote it with its path. The arrow folds.</p>
+<main id="doc"></main>
+<script src="aether-icons.js"></script>
+<script src="aether-sdk.js"></script>
+<script>
+// A JSON tree: objects and arrays fold (<details>), every key/value carries its path ($.a[0].b). Large files open folded below depth 2.
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const step = (path, k) => typeof k === "number" ? `${path}[${k}]` : /^[A-Za-z_$][\w$]*$/.test(k) ? `${path}.${k}` : `${path}[${JSON.stringify(k)}]`;
+const paths = [];   // index → [path, value]
+function leaf(v) {
+  if (v === null) return '<span class="z">null</span>';
+  if (typeof v === "string") return `<span class="s">${esc(JSON.stringify(v))}</span>`;
+  if (typeof v === "number") return `<span class="n">${v}</span>`;
+  return `<span class="b">${v}</span>`;
+}
+function node(key, v, path, depth, open) {
+  const n = paths.push([path, v]) - 1;
+  const label = key === null ? "" : `<span class="k">${esc(typeof key === "number" ? key : JSON.stringify(key))}</span>: `;
+  if (v === null || typeof v !== "object") return `<div class="row"><span data-p="${n}">${label}${leaf(v)}</span></div>`;
+  const kids = Array.isArray(v) ? v.map((x, i) => [i, x]) : Object.entries(v);
+  const [o, c] = Array.isArray(v) ? ["[", "]"] : ["{", "}"];
+  if (!kids.length) return `<div class="row"><span data-p="${n}">${label}${o}${c}</span></div>`;
+  const inner = kids.map(([k, x]) => node(k, x, step(path, k), depth + 1, open)).join("");
+  return `<details${depth < open ? " open" : ""}><summary><span data-p="${n}">${label}${o}</span> <span class="c">${kids.length} ${Array.isArray(v) ? "items" : "keys"}</span></summary>${inner}<div>${c}</div></details>`;
+}
+aether.on("theme", (d) => document.body.classList.toggle("dark", !!d.dark));
+const fold = (open) => document.querySelectorAll("#doc details").forEach((x, i) => { x.open = open || i === 0; });   // collapsing keeps the root open
+aether.on("open", (d) => {
+  const doc = document.getElementById("doc");
+  paths.length = 0;
+  aether.bar([{ id: "dl", icon: "Download", label: "Download", title: "Download the file", run: () => aether.download() }]);
+  if (d.error) { doc.textContent = d.error; return; }
+  let v;
+  try { v = JSON.parse(d.text || ""); }
+  catch (e) { doc.innerHTML = `<p class="err">Not valid JSON: ${esc(e.message)}</p><pre>${esc((d.text || "").slice(0, 20000))}</pre>`; return; }
+  doc.innerHTML = node(null, v, "$", 0, (d.text || "").length > 200000 ? 2 : 99);
+  aether.bar([   // these live in the shell's bar, next to 📎 🔄 (spec §3.1)
+    { id: "open", label: "⊞ Expand all", run: () => fold(true) },
+    { id: "close", label: "⊟ Collapse all", run: () => fold(false) },
+    { id: "dl", icon: "Download", label: "Download", title: "Download the file", run: () => aether.download() },
+  ]);
+  doc.querySelectorAll("[data-p]").forEach((e) => e.addEventListener("click", (ev) => {
+    ev.preventDefault();   // inside <summary> a click would fold ―― the ▸ marker still does
+    const [path, val] = paths[+e.dataset.p];
+    const text = JSON.stringify(val, null, 2);
+    aether.quote(`${d.name} ${path}`.slice(0, 60), `${path} = ${text.length > 4000 ? text.slice(0, 4000) + "\n…" : text}`);
+  }));
+});
+</script>
+</body>
+</html>

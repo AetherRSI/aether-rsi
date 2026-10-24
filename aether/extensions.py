@@ -70,6 +70,8 @@ def check(folder) -> tuple:
     if kind == "preview":
         if "binary" in m and not isinstance(m["binary"], bool):
             bad.append("binary must be true or false")
+        if "render" in m and not (isinstance(m["render"], list) and m["render"] and all(isinstance(x, str) for x in m["render"])):
+            bad.append("render must be a list of strings (the command that draws the pages)")
         match = m.get("match")
         if not (isinstance(match, list) and match and all(isinstance(x, str) and (x.startswith(".") or x == "*") for x in match)):
             bad.append('match must be a list of extensions like [".md"] ("*" = any file no other preview takes)')
@@ -77,7 +79,7 @@ def check(folder) -> tuple:
         cmd = m.get("command")
         if not (isinstance(cmd, list) and cmd and all(isinstance(x, str) for x in cmd)):
             bad.append("command must be a list of strings")
-        for k in ("inject", "guard"):
+        for k in ("inject", "guard", "audio", "dispatch"):
             if k in m and not isinstance(m[k], bool):
                 bad.append(f"{k} must be true or false")
     if kind == "app" and "ports" in m and not (isinstance(m["ports"], list) and all(isinstance(x, int) and not isinstance(x, bool) and 0 < x < 65536 for x in m["ports"])):
