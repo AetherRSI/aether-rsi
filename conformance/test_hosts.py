@@ -28,6 +28,9 @@ class Names(unittest.TestCase):
         for bad in ("evil.example", "localhost.evil.example", "127.0.0.1.evil.example"):
             self.assertFalse(allowed_host(bad), bad)
         self.assertTrue(allowed_host("proxy.example", {"proxy.example"}))
+        self.assertTrue(allowed_host("8080-cs-1.cloudshell.dev", {".cloudshell.dev"}))   # a domain and the names under it
+        self.assertTrue(allowed_host("cloudshell.dev", {".cloudshell.dev"}))
+        self.assertFalse(allowed_host("evilcloudshell.dev", {".cloudshell.dev"}))
 
     def test_settings_hosts(self):
         s, bad = settings.parse({"hosts": ["Proxy.Example", "https://x.example", "a.example:443"]})
@@ -64,6 +67,13 @@ class Live_(unittest.TestCase):
         self.addCleanup(os.environ.pop, "AETHER_HOSTS", None)
         self.assertEqual(self.live.call("api/info", None, {"Host": "proxy.example"})[0], 200)
         self.assertEqual(self.live.call("api/info", None, {"Host": "other.example"})[0], 403)
+
+    def test_cloud_shell_web_preview(self):   # the proxy rewrites Host to 127.0.0.1 and keeps the page's Origin
+        os.environ["WEB_HOST"] = "cs-1-default.cs-asia-east1-x.cloudshell.dev"
+        self.addCleanup(os.environ.pop, "WEB_HOST", None)
+        o = f"https://{self.live.port}-cs-1-default.cs-asia-east1-x.cloudshell.dev"
+        self.assertEqual(self.live.call("api/tasks", {"title": "ok"}, {"Origin": o})[0], 200)
+        self.assertEqual(self.live.call("api/tasks", {"title": "x"}, {"Origin": "https://8080-cs-2-default.cs-asia-east1-x.cloudshell.dev"})[0], 403)   # someone else's
 
     def test_settings_hosts_are_read(self):
         Path(os.environ["AETHER_SETTINGS"]).write_text(json.dumps({"hosts": ["relay.example"]}))

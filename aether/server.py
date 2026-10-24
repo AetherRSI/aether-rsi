@@ -300,7 +300,8 @@ class Core:
         X-Aether no longer stops it (it is same-origin to the browser). Only names nobody can rebind pass ―― an IP address,
         localhost ―― and the ones settings.json `hosts` / AETHER_HOSTS add for a proxy in front."""
         extra = set(self.settings.get()[0].get("hosts", [])) | {h.strip().lower() for h in os.environ.get("AETHER_HOSTS", "").split(",") if h.strip()}
-        return all(allowed_host(n, extra) for n in (hostname(host), hostname(origin, url=True)) if n is not None)
+        web = os.environ.get("WEB_HOST", "").strip().lower()   # Google Cloud Shell: its web preview is https://<port>-$WEB_HOST (the proxy rewrites Host, not Origin)
+        return all(allowed_host(n, extra) or bool(web and n.endswith("-" + web)) for n in (hostname(host), hostname(origin, url=True)) if n is not None)
 
     def need_ws(self) -> Path:
         if not self.ws:
@@ -548,7 +549,8 @@ def hostname(value, url: bool = False):
 
 
 def allowed_host(name: str, extra=()) -> bool:
-    if name == "localhost" or name in extra:
+    """extra: names, or ".example.com" for that domain and every name under it (a proxy's own domain: only it answers for those names)."""
+    if name == "localhost" or name in extra or any(e.startswith(".") and (name.endswith(e) or name == e[1:]) for e in extra):
         return True
     try:
         ipaddress.ip_address(name)   # a page can only send an IP as Host when it was opened by that IP: nothing to rebind
@@ -614,10 +616,12 @@ def handler(core: Core):
 
         def _host_ok(self) -> bool:
             if not core.peer_ok(self.client_address[0]):
+                print(f"[refused] peer {self.client_address[0]} (allow_remote is off)  host={self.headers.get('Host')!r}  {self.command} {self.path[:80]}", flush=True)
                 self._json({"error": "forbidden: only this machine may connect (settings.json allow_remote lets others in)"}, 403)
                 return False
             if core.host_ok(self.headers.get("Host"), self.headers.get("Origin")):
                 return True
+            print(f"[refused] host={self.headers.get('Host')!r} origin={self.headers.get('Origin')!r} peer {self.client_address[0]}  {self.command} {self.path[:80]}", flush=True)   # add the name to settings.json hosts if it is yours
             self._json({"error": "forbidden host: open the page by 127.0.0.1 or localhost, or add the name to settings.json hosts"}, 403)
             return False
 

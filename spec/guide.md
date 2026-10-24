@@ -54,7 +54,7 @@ Copy `settings.example.json` to `settings.json` beside it (git ignores it; a pip
 | `vertex` | `credentials` (path of the service-account key), `project`, `region`. Every agent gets them as `GOOGLE_APPLICATION_CREDENTIALS`, `ANTHROPIC_VERTEX_PROJECT_ID` / `GOOGLE_CLOUD_PROJECT`, `CLOUD_ML_REGION` / `GOOGLE_CLOUD_LOCATION`, plus `CLAUDE_CODE_USE_VERTEX=1` and `GOOGLE_GENAI_USE_VERTEXAI=true`, even when the core was not started from your shell |
 | `env` | More environment for agents (wins over `vertex`) |
 | `allow_remote` | `true` lets other machines connect. Default `false`: only this one (a proxy in front, such as code-server or a tunnel, runs here too) |
-| `hosts` | More names the page may be opened by, for a proxy in front (e.g. `["code.example.com"]`; also `AETHER_HOSTS=a,b`). IP addresses and `localhost` always pass; any other Host or Origin gets 403, so a site whose name was rebound to 127.0.0.1 cannot reach the core |
+| `hosts` | More names the page may be opened by, for a proxy in front (e.g. `["code.example.com"]`, or `".example.com"` for a domain and every name under it; also `AETHER_HOSTS=a,b`). Google Cloud Shell's web preview (`<port>-$WEB_HOST`) passes without it. IP addresses and `localhost` always pass; any other Host or Origin gets 403, so a site whose name was rebound to 127.0.0.1 cannot reach the core |
 
 The core reads it again when it changes. Only the key's path is passed, never its contents. A bad entry is skipped and shown as an error;
 while the core is locked, agents may not write the file.
