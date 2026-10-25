@@ -1,0 +1,72 @@
+# Push a tag vX.Y.Z → check → build → TestPyPI → (a person approves the "pypi" environment) → PyPI.
+# Trusted publishing: no token is stored anywhere; PyPI trusts this repo, this file and the environment name.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1   # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0   # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: The tag is the version
+        run: |
+          v=$(python -c "import aether; print(aether.VERSION)")
+          test "${GITHUB_REF_NAME}" = "v${v}" || { echo "tag ${GITHUB_REF_NAME} is not v${v} (aether/__init__.py)"; exit 1; }
+      - name: Conformance
+        run: python -m unittest discover -s conformance -t .
+      - name: Build
+        run: |
+          python -m pip install --disable-pip-version-check build
+          python -m build
+      - name: What goes to PyPI (sample project in; settings, secrets, home paths out)
+        env:
+          AETHER_DIST: dist
+        run: python -m unittest -v conformance.test_dist
+      - name: Installs into a fresh venv
+        env:
+          AETHER_PIP_TEST: "1"
+        run: python -m unittest -v conformance.test_pip
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9   # v7.0.2
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  testpypi:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: testpypi
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086   # v1.14.3
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  pypi:
+    needs: testpypi
+    runs-on: ubuntu-latest
+    environment: pypi   # required reviewer: a person presses the button
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333   # v8.0.2
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086   # v1.14.3

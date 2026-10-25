@@ -156,6 +156,11 @@ AETHER_PRIVATE_WORDS="name,company" python3 -m unittest conformance.test_clean  
 ```
 
 No network beyond 127.0.0.1 and no LLM. An extension conforms when `python3 -m aether check` reports no problems.
+Two opt-in tests reach the network to build: `AETHER_PIP_TEST=1` (`test_pip`, installs into a fresh venv) and `AETHER_DIST=dist` (`test_dist`, checks the built wheel and sdist).
+
+## Releases
+
+Pushing a tag `vX.Y.Z` runs `.github/workflows/release.yml`: the tag must equal `aether.VERSION`, the conformance tests, `test_dist` and `test_pip` must pass, then the build goes to TestPyPI and waits for a person to approve the `pypi` environment before PyPI. Publishing is trusted publishing (no token is stored).
 
 ## Layout
 
@@ -163,6 +168,7 @@ No network beyond 127.0.0.1 and no LLM. An extension conforms when `python3 -m a
 aether/        the core (server, queue, store, files, extensions, static/)
 spec/          the protocol (v0.1)
 conformance/   tests that define "conforms"
+.github/       the release workflow
 settings.example.json   the template for settings.json (this machine's extension folders and Vertex credentials)
 ```
 

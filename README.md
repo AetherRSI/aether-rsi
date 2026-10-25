@@ -11,7 +11,7 @@ pip install aether-rsi    # or from a clone: pip install .
 aether                    # http://127.0.0.1:8030/ ― offers a SampleProject on the first run
 ```
 
-From a clone, `python3 -m aether` works too (`--workspace DIR`, `--port N`, `--reload`).
+Python 3.9+ on macOS, Linux or Windows (WSL). From a clone, `python3 -m aether` works too (`--workspace DIR`, `--port N`, `--reload`).
 
 ## Extensions
 
