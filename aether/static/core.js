@@ -1680,4 +1680,15 @@ async function linked(id) {   // DeepLink: #task=<id>
   setDest(t); await sync(true, true);
   if (id && !t) bubble("bot", muiText("{Warning} The linked task was not found (deleted, or a wrong id). Showing {Explore} All."));
 }
+// A phone's keyboard: iOS keeps 100vh at the full height and slides the page up under it, header and all ―― fit the page to what is left and bring its top back.
+// A pinch zoom shrinks the visual viewport too; that is the person looking closer, not less room, so it is left alone
+function fitViewport() {
+  const vv = window.visualViewport;
+  if (!vv || vv.scale > 1.01) return;
+  document.documentElement.style.setProperty("--vvh", `${Math.round(vv.height)}px`);
+  if (vv.offsetTop > 0 || window.scrollY > 0) window.scrollTo(0, 0);
+}
+window.visualViewport?.addEventListener("resize", fitViewport);
+window.visualViewport?.addEventListener("scroll", fitViewport);
+fitViewport();
 start().catch((e) => bubble("bot", `❌ Could not load: ${e.message}`));
