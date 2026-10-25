@@ -8,7 +8,8 @@ A workspace made by `aether init` (or the first `aether` start). 📂 Files show
 
 | Folder | What is in it |
 |:--|:--|
-| `apps/hello-app/` | An app: `aether.json` (kind `app`) + `index.html` + `data.json` + `CLAUDE.md` (the agent's rules for it) |
+| `AGENTS.md` | Rules for any agent in this workspace: the core asks a new conversation to read it |
+| `apps/hello-app/` | An app: `aether.json` (kind `app`) + `index.html` + `data.json` + `AGENTS.md` (the rules for any agent) |
 | `extensions/preview/json-preview/` | A preview: JSON as a tree. Plain text comes with the core |
 | `extensions/agent/echo-agent/` | An agent: Echo (demo). Claude Code comes with the core |
 | `samples/` | One file per preview feature, to try the previews (see `samples/README.md`) |

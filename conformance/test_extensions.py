@@ -88,9 +88,9 @@ class Rules(unittest.TestCase):
         self.assertTrue(extensions.check(f)[1])   # too big
 
     def test_app_rules_file(self):
-        a = {"aether": "0.1", "kind": "app", "id": "a", "label": "A", "entry": "index.html", "agent_rules": "CLAUDE.md"}
+        a = {"aether": "0.1", "kind": "app", "id": "a", "label": "A", "entry": "index.html", "agent_rules": "AGENTS.md"}
         self.assertTrue(self.bad(a))
-        self.assertEqual(self.bad(a, ("index.html", "CLAUDE.md")), [])
+        self.assertEqual(self.bad(a, ("index.html", "AGENTS.md")), [])
 
     def test_app_ports(self):
         """ports: the loopback servers an app may fetch through the shell ―― a list of port numbers, nothing else."""

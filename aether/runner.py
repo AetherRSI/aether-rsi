@@ -39,6 +39,15 @@ def compose(text: str, quotes) -> str:
     return text.strip() + (QUOTED + "\n\n".join(blocks) if blocks else "")
 
 
+RULES = "AGENTS.md"   # the workspace's rules for every agent, whatever file its own tool reads (2026-10-25 "Gemini も使うので汎用の名前に")
+
+
+def told(prompt: str, ws, session) -> str:
+    """The prompt as sent: the first turn of a conversation in a workspace with AGENTS.md is told to read it, at the end so the message
+    still leads (a /command stays one). The stored prompt stays as it was."""
+    return f"{prompt}\n\n(This workspace has rules: read {RULES} first and follow it.)" if not session and ws and (Path(ws) / RULES).is_file() else prompt
+
+
 def _blocks(prompt: str) -> list:
     i = prompt.find(QUOTED)
     return re.split(r"\n\n(?=@)", prompt[i + len(QUOTED):]) if i >= 0 else []   # a quote's own blank lines are "> ", so a blank line is between blocks
@@ -155,7 +164,8 @@ class Runner:
         job = self.store.claim(jid)   # an edit may have changed it since it was picked; a stop may have taken it
         if not job:
             return
-        start = {"type": "start", "aether": PROTOCOL, "prompt": job["prompt"], "session": self.store.session(job["task"], a["id"]),
+        session = self.store.session(job["task"], a["id"])
+        start = {"type": "start", "aether": PROTOCOL, "prompt": told(job["prompt"], self.ws, session), "session": session,
                  "cwd": str(self.ws), "protect": self.protect}
         if a.get("audio") and jid in self.voiced:
             start["audio"] = True

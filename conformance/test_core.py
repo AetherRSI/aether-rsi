@@ -13,7 +13,7 @@ from pathlib import Path
 
 from conformance.helpers import NO_SAMPLES, REPO, SAMPLES, Live
 from aether import files
-from aether.runner import append, compose, quotes_of
+from aether.runner import append, compose, quotes_of, told
 from aether.server import bundle, lock_state
 from aether.store import asks
 
@@ -44,14 +44,24 @@ class Compose(unittest.TestCase):
         self.assertEqual(compose(" hi ", []), "hi")
 
     def test_quotes(self):
-        p = compose("Fix @1", [{"n": 1, "label": "📄 a.md", "text": "x\ny"}, {"n": 2, "label": "🧩 app/", "rules": "app/CLAUDE.md"}])
+        p = compose("Fix @1", [{"n": 1, "label": "📄 a.md", "text": "x\ny"}, {"n": 2, "label": "🧩 app/", "rules": "app/AGENTS.md"}])
         self.assertIn("@1 📄 a.md\n> x\n> y", p)
-        self.assertIn("read app/CLAUDE.md first", p)
+        self.assertIn("read app/AGENTS.md first", p)
 
     def test_quotes_of(self):
-        p = compose("Fix @1", [{"n": 1, "label": "📄 a.md", "text": "x\n\ny"}, {"n": 2, "label": "🧩 app/", "rules": "app/CLAUDE.md"}])
+        p = compose("Fix @1", [{"n": 1, "label": "📄 a.md", "text": "x\n\ny"}, {"n": 2, "label": "🧩 app/", "rules": "app/AGENTS.md"}])
         self.assertEqual(quotes_of(p), [{"n": 1, "label": "📄 a.md"}, {"n": 2, "label": "🧩 app/"}])
         self.assertEqual(quotes_of("no quotes"), [])
+
+    def test_told_reads_agents_md_on_the_first_turn(self):
+        """AGENTS.md in the workspace: a new conversation is asked to read it; a resumed one, or a workspace without it, is not."""
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(told("hi", d, None), "hi")
+            Path(d, "AGENTS.md").write_text("rules", encoding="utf-8")
+            self.assertTrue(told("/long hi", d, None).startswith("/long hi\n\n"))   # the message leads: a /command stays one
+            self.assertIn("read AGENTS.md first", told("hi", d, None))
+            self.assertEqual(told("hi", d, "s1"), "hi")
+            self.assertEqual(told("hi", None, None), "hi")
 
     def test_append_numbers_after_the_old_quotes(self):
         """Added to a waiting message: its quotes keep @1 @2, the new ones become @3…, and @n in the added text follows them."""
