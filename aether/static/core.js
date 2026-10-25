@@ -1083,20 +1083,32 @@ function drawTree() {
   if (PICK.size) { b.replaceChildren(...lead(`📎 ${PICK.size}`)); b.title = b.ariaLabel = `Quote the ${PICK.size} selected in ③ (Esc: clear the selection)`; }
   drawFav();
 }
-// ★ Favorites: rows starred in the tree stay listed above it (2026-10-25 "favorites in the EXPLORER"). Kept in this browser per workspace,
-// like the open folders. Only the path is kept: an app's manifest is read fresh when it opens. A star whose file has gone stays, greyed, until unstarred
+// ★ Favorites: rows starred in the tree stay listed above it (2026-10-25 "favorites in the EXPLORER"). The core keeps them per workspace
+// (config favorites, 2026-10-26 "sync them across devices"): the phone and the desktop see the same stars; the open folders and the widths stay per browser.
+// Only the path is kept: an app's manifest is read fresh when it opens. A star whose file has gone stays, greyed, until unstarred
 let FAV = [];   // [{path, dir}] of this workspace, in the order starred
 const GONE = new Set();
-const favAll = () => { try { return JSON.parse(LS.aetherFav || "{}"); } catch { return {}; } };
-const favLoad = () => { FAV = favAll()[INFO.workspace_path] || []; };
+async function favLoad() {
+  FAV = INFO.favorites || [];
+  let old = {}; try { old = JSON.parse(LS.aetherFav || "{}"); } catch { /* unreadable: nothing to bring */ }
+  const mine = old[INFO.workspace_path] || [];   // stars kept in this browser before 2026-10-26 go to the core once
+  if (!mine.length) return;
+  for (const f of mine) if (!FAV.some((x) => x.path === f.path)) FAV = INFO.favorites = (await api("api/config", { favorite: { path: f.path, dir: !!f.dir, on: true } })).favorites;
+  delete old[INFO.workspace_path]; if (Object.keys(old).length) LS.aetherFav = JSON.stringify(old); else delete LS.aetherFav;
+}
+async function favSync() {   // back to the page (another device may have starred meanwhile)
+  const f = (await api("api/info")).favorites || [];
+  if (JSON.stringify(f) !== JSON.stringify(FAV)) { FAV = INFO.favorites = f; drawTree(); }
+}
 const isFav = (p) => FAV.some((f) => f.path === p);
 const star = (on) => el("button", { type: "button", class: `fstar${on ? " on" : ""}`, tabindex: "-1", title: on ? "Remove from favorites" : "Add to favorites", "aria-label": on ? "Remove from favorites" : "Add to favorites", "aria-pressed": String(on) }, mui(on ? "Star" : "StarBorder"));
-function favToggle(r) {
-  FAV = isFav(r.path) ? FAV.filter((f) => f.path !== r.path) : [...FAV, { path: r.path, dir: !!r.dir }];
-  GONE.delete(r.path);
-  const all = favAll();
-  if (FAV.length) all[INFO.workspace_path] = FAV; else delete all[INFO.workspace_path];
-  LS.aetherFav = JSON.stringify(all); drawTree();
+async function favToggle(r) {
+  const on = !isFav(r.path), was = FAV;
+  FAV = on ? [...FAV, { path: r.path, dir: !!r.dir }] : FAV.filter((f) => f.path !== r.path);   // the star turns at once; the core's answer settles it
+  GONE.delete(r.path); drawTree();
+  try { FAV = INFO.favorites = (await api("api/config", { favorite: { path: r.path, dir: !!r.dir, on } })).favorites; }
+  catch (e) { FAV = was; alert(`★ not saved: ${e.message}`); }
+  drawTree();
 }
 function drawFav() {
   const box = $("#ffav"); box.hidden = !FAV.length;
@@ -1377,7 +1389,8 @@ async function filesStart() {   // first time the tab opens: the tree, then what
   if (filesUp) { if (treeStale) { treeStale = false; refreshTree().catch(() => {}); } return; }
   filesUp = true;
   $("#froot").textContent = INFO.workspace; $("#froot").title = INFO.workspace_path;
-  favLoad();
+  await favLoad().catch(() => {});
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") favSync().catch(() => {}); });
   await kids("").catch(() => {}); await loadOpen(); drawTree();
   const c = CUR;
   if (c) (c.kind === "dir" ? openDir(c.path) : c.kind === "app" ? Promise.resolve(openApp(c.path, c.app)) : openFile(c.path)).then(() => view(false)).catch(empty);

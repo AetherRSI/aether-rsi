@@ -255,6 +255,23 @@ class TwoAuthors(unittest.TestCase):
         self.assertEqual(json.loads((self.live.data / "config.json").read_text())["open_with"], {".md": "bob.md"})
         self.assertEqual(self.live.json("api/config", {"open_with": {".md": None}})[1]["open_with"], {})
 
+    def test_favorites_are_kept_by_the_core(self):   # ★ the same on every device (2026-10-26)
+        star = lambda path, on, d=False: self.live.json("api/config", {"favorite": {"path": path, "dir": d, "on": on}})
+        self.assertEqual(self.live.json("api/info")[1]["favorites"], [])
+        code, r = star("notes/a.md", True)
+        self.assertEqual((code, r["favorites"]), (200, [{"path": "notes/a.md", "dir": False}]))
+        star("notes", True, True)
+        star("notes/a.md", True)   # already starred: keeps its place
+        want = [{"path": "notes/a.md", "dir": False}, {"path": "notes", "dir": True}]
+        self.assertEqual(self.live.json("api/info")[1]["favorites"], want)   # what another device reads
+        ws = self.live.json("api/info")[1]["workspace_path"]
+        self.assertEqual(json.loads((self.live.data / "config.json").read_text())["favorites"], {ws: want})
+        self.assertEqual(star("notes/a.md", False)[1]["favorites"], [{"path": "notes", "dir": True}])
+        self.assertEqual(star("notes", False)[1]["favorites"], [])
+        self.assertNotIn(ws, json.loads((self.live.data / "config.json").read_text())["favorites"])
+        for f in ({"path": "/etc/passwd", "on": True}, {"path": "../up", "on": True}, {"path": "", "on": True}, {"path": "a"}, "a", {"path": "a", "on": 1}):
+            self.assertEqual(self.live.json("api/config", {"favorite": f})[0], 400, f)
+
     def test_only_shared_keys_and_only_real_choices(self):
         for body in ({"core_locked": False}, {"open_with": {".md": "nobody"}}, {"open_with": {".txt": "ada.md"}},
                      {"open_with": {"md": "ada.md"}}, {"agent": "nobody"}):

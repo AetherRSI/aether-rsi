@@ -18,7 +18,8 @@
   POST /api/jobs/<id>/audio   → {ticket}: 🎙 single use, 30 s, for GET /api/jobs/<id>/audio?ticket= (Upgrade: websocket) ―― the person's voice to the
                               job's agent and its voice back (manifest audio: true, spec/agent.md §4.2; POST /api/send voice: true starts a job for it)
   POST /api/jobs/<id>/parallel  {confirm?}  ⚡ a queued job leaves its busy session for a new task of its own and starts now (409 once it runs or ended; 409 conflict as for send)
-  POST /api/config            {agent?, open_with?, workspace?}  the person's choices (shared keys only; core_locked is not one)
+  POST /api/config            {agent?, open_with?, workspace?, favorite?}  the person's choices (shared keys only; core_locked is not one)
+                              favorite: {path, dir, on} ★ one row of this workspace's explorer on or off → favorites: [{path, dir}] (also in /api/info)
   GET  /api/files?path=       one folder of the workspace (409 until a workspace is set)
   GET  /api/read?path=        one text file of the workspace
   GET  /api/zip[/<name>]?path=  ⬇ a folder (or an app) of the workspace as "<folder>.folder.zip" ―― what the tree shows of it. <name>: anything (the shell puts
@@ -112,7 +113,8 @@ def bundle(html: str, find) -> str:
     return TAG.sub(swap, html)
 
 
-SHARED = ("agent", "open_with", "workspace")   # keys the shell may write. Extensions never write them (spec/custom.md §2.1)
+SHARED = ("agent", "open_with", "workspace", "favorite")   # keys the shell may write. Extensions never write them (spec/custom.md §2.1)
+FAV_MAX = 200   # ★ per workspace
 RECENT = 10   # config `recent`: the workspaces used last, newest first. The core writes it when the workspace changes; the shell only reads it
 
 
@@ -192,6 +194,7 @@ class Core:
         self.data.mkdir(parents=True, exist_ok=True)
         self.cfg = self.data / "config.json"
         self.config = json.loads(self.cfg.read_text()) if self.cfg.is_file() else {}
+        self._cfg_lock = threading.Lock()   # two devices may star at once: each change reads and writes config.json whole
         self.fixed = bool(workspace)
         self.ws, self.ws_error = None, ""
         try:
@@ -349,10 +352,18 @@ class Core:
                            for a in e["agent"].values()],
                 "previews": [{"id": p["id"], "label": p["label"], "match": p["match"], "entry": p["entry"], "binary": bool(p.get("binary")), "render": bool(p.get("render")), "spare": bool(p.get("spare"))}
                              for p in e["preview"].values()],
-                "open_with": self.config.get("open_with") or {}, "errors": e["errors"]}
+                "open_with": self.config.get("open_with") or {}, "favorites": self.favorites(), "errors": e["errors"]}
+
+    def favorites(self) -> list:
+        """★ of this workspace's explorer, [{path, dir}] in the order starred. The core keeps them, so the phone and the desktop see the same stars"""
+        return list((self.config.get("favorites") or {}).get(str(self.ws or ""), []))
 
     def set_config(self, b: dict) -> dict:
-        """The person picks the default agent or which preview opens a file type. Other keys are refused, so the lock stays put."""
+        with self._cfg_lock:
+            return self._set_config(b)
+
+    def _set_config(self, b: dict) -> dict:
+        """The person picks the default agent or which preview opens a file type, or stars a row. Other keys are refused, so the lock stays put."""
         bad = sorted(set(b) - set(SHARED))
         if bad:
             raise ValueError(f"not a setting the shell may change: {', '.join(bad)}")
@@ -386,10 +397,29 @@ class Core:
                 else:
                     raise ValueError(f"no preview {pid!r} for {ext}")
             self.config["open_with"] = cur
+        if "favorite" in b:   # one star at a time, not the whole list: a device that loaded earlier cannot drop the stars another one added since
+            f, ws = b["favorite"], str(self.need_ws())
+            path = f.get("path") if isinstance(f, dict) else None
+            if not (isinstance(path, str) and 0 < len(path) <= 1024 and isinstance(f.get("on"), bool)) or path.startswith("/") or "\0" in path or ".." in path.split("/"):
+                raise ValueError('favorite must be {"path": "a/path/in/the/workspace", "dir": true|false, "on": true|false}')
+            favs = dict(self.config.get("favorites") or {})
+            cur = list(favs.get(ws, []))
+            had = any(x.get("path") == path for x in cur)
+            if f["on"] and not had:
+                if len(cur) >= FAV_MAX:
+                    raise ValueError(f"{FAV_MAX} favorites at most: unstar one first")
+                cur.append({"path": path, "dir": bool(f.get("dir"))})
+            elif not f["on"]:
+                cur = [x for x in cur if x.get("path") != path]
+            if cur:
+                favs[ws] = cur
+            else:
+                favs.pop(ws, None)
+            self.config["favorites"] = favs
         tmp = self.cfg.with_suffix(".tmp")
         tmp.write_text(json.dumps(self.config, ensure_ascii=False, indent=2))
         tmp.replace(self.cfg)
-        return {k: self.config.get(k) for k in SHARED}
+        return {**{k: self.config.get(k) for k in SHARED if k != "favorite"}, "favorites": self.favorites() if self.ws else []}
 
     def conflicts(self, prompt: str, sess: str) -> list:
         """The running jobs of other sessions that quote a file or folder this prompt quotes: a task is editing it now.

@@ -138,7 +138,8 @@ Extensions written by different people must run side by side on anyone's machine
 | Apps | Never: an app is identified by its folder, not by its `id` |
 | `id` | Share with `author.name` (e.g. `ada.md-preview`). On a clash the first found wins (workspace, then data, folders in name order) and the other is listed in `/api/info` `errors` with the folder that took the id |
 | A file type (two previews match `.md`) | **The person picks.** The shell offers "open with" when more than one preview matches and stores the pick in `<data>/config.json` `open_with` (`{".md": "ada.md-preview"}`). Without a pick, the first found opens |
-| Shared settings (`agent`, `open_with`) | Only the person changes them, through the shell (`POST /api/config`). Extensions cannot: pages have no access to the API, and agents get the data folder in `protect` while the core is locked. `core_locked` is not writable through the API at all |
+| Shared settings (`agent`, `open_with`, `favorites`) | Only the person changes them, through the shell (`POST /api/config`). Extensions cannot: pages have no access to the API, and agents get the data folder in `protect` while the core is locked. `core_locked` is not writable through the API at all |
+| ★ Favorites in the explorer | Kept by the core in `<data>/config.json` `favorites` (`{"<workspace path>": [{"path", "dir"}]}`), so every device that opens the shell sees the same stars. The shell turns one star at a time (`POST /api/config` `{favorite: {path, dir, on}}`, at most 200 per workspace) so a device that loaded earlier cannot drop stars added since. Open folders and pane widths stay per browser |
 
 ## 3. Pages (preview and app)
 
