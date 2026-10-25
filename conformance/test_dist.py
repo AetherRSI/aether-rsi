@@ -1,5 +1,5 @@
 """What goes to PyPI: the built wheel and sdist in AETHER_DIST (a folder, e.g. dist/ after `python -m build`).
-Opt-in, since building needs the network. They carry the sample project and the fallbacks, depend on nothing,
+Opt-in, since building needs the network. They carry the sample project, the fallbacks and the MIT license, depend on nothing,
 and hold no machine settings, secrets, caches or home paths (the words of test_clean)."""
 
 import os
@@ -49,6 +49,13 @@ class Dist(unittest.TestCase):
             meta = next(v for n, v in members(p).items() if n.endswith(".dist-info/METADATA")).decode()
             self.assertNotIn("Requires-Dist:", meta)
             self.assertIn(f"Version: {VERSION}", meta)
+
+    def test_license_ships(self):
+        for p in self.wheels + self.sdists:
+            names = members(p)
+            self.assertTrue(any(n == "LICENSE" or n.endswith(("/licenses/LICENSE", ".dist-info/LICENSE")) for n in names), f"{p.name}: no LICENSE")
+            meta = next(v for n, v in names.items() if n.endswith(("METADATA", "PKG-INFO")) and "egg-info" not in n).decode()
+            self.assertIn("License-Expression: MIT", meta, p.name)
 
     def test_nothing_private(self):
         words = [w.strip().lower() for w in os.environ.get("AETHER_PRIVATE_WORDS", "").split(",") if w.strip()]

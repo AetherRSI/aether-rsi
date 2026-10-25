@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=62.3"]   # 62.3: "**" in package-data
+requires = ["setuptools>=77"]   # 77: license as an SPDX expression (PEP 639); 62.3: "**" in package-data
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,6 +8,8 @@ dynamic = ["version"]
 description = "A small, local workbench for coding agents: a message queue, a task list and a file tree. Everything else is an extension."
 readme = "README.md"
 requires-python = ">=3.9"
+license = "MIT"
+license-files = ["LICENSE"]
 dependencies = []
 
 [project.scripts]
