@@ -1,4 +1,4 @@
-/* AetherRSI shell. Same look as SoloGen v3: ① 📋 Tasks over the conversation · ② panel (📂 Files) · ③ composer. */
+/* AetherRSI shell: ① 📋 Tasks over the conversation · ② panel (📂 Files) · ③ composer. */
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; font: 14px/1.55 -apple-system, "Hiragino Sans", sans-serif; color: #1d2433; background: #f6f7fb; }
 body { display: grid; grid-template-rows: auto 1fr auto auto; grid-template-columns: minmax(0, 1fr); height: 100vh; }
@@ -140,7 +140,7 @@ button.qtw:hover, button.qtw:focus-visible, button.qtw[aria-expanded="true"] { c
 @media (hover: none) { .msg.me .mcopy { opacity: .5; } }   /* no hover on a phone: always there, faint */
 .bot { align-self: flex-start; background: #fff; border: 1px solid #e3e6ee; }
 .bot .step { color: #556; font-size: 12.5px; }
-.bot .step.more { cursor: pointer; overflow-wrap: anywhere; }   /* a step cut short: the text, then … on the same line; click anywhere on it for the whole text (as SoloGen v3) */
+.bot .step.more { cursor: pointer; overflow-wrap: anywhere; }   /* a step cut short: the text, then … on the same line; click anywhere on it for the whole text */
 .bot .step.more:hover { color: #223; }
 .bot .step.more pre.full { margin: 2px 0; white-space: pre-wrap; overflow-wrap: anywhere; font: 12px/1.5 ui-monospace, Menlo, monospace; background: #f3f5fa; border-radius: 6px; padding: 6px 8px; max-height: 360px; overflow: auto; cursor: text; }
 .bot .more-btn { border: 0; background: #e8ecf5; color: #445; border-radius: 4px; padding: 0 6px; margin-left: 4px; font: inherit; font-size: 11.5px; cursor: pointer; }

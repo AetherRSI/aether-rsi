@@ -1,6 +1,6 @@
 // AetherRSI shell: ① 📋 Tasks (🧭 All · 🔄 In progress bundled by session · 👀 To review · ✅ Done) over the conversation of one task (or 🧭 All) · ② the panel (📂 Files) · ③ the composer.
 // Survives a reload: the open task is the URL's #task=<id>, the draft, quotes, the line between tasks and conversation, panel width and open folders live in localStorage.
-// Previews and apps run in sandboxed iframes and talk to this page only through postMessage (spec/v0.1.md §3).
+// Previews and apps run in sandboxed iframes and talk to this page only through postMessage (spec/custom.md §3).
 const $ = (s) => document.querySelector(s);
 // Icons are one-colour Material icons (icons.js, 2026-10-24 "use these icons everywhere, each a simple single colour"):
 // a string that starts with a known emoji ("📎 Quote", "❌ " + error) draws that emoji as the icon, and tooltips drop it. The data keeps its emoji
@@ -262,7 +262,7 @@ function compose(text, qs) {   // what the server will build (runner.compose), s
   return qs.length ? `${text}\n\n---\nQuoted:\n${qs.map((q) => `@${q.n} ${q.label}${q.text ? `\n> ${q.text}` : ""}`).join("\n\n")}` : text;
 }
 
-// ---------- 🎙 voice (spec/v0.1.md §4.2) ----------
+// ---------- 🎙 voice (spec/agent.md §4.2) ----------
 // An agent whose manifest says audio: true hears the person while it runs (2026-10-24 "change the core so the agents that support it
 // take live voice input"). 🎙 sends ③ as a new message with voice: true (or, with ↪ on a running job of such an agent, opens the
 // mic into it); the core hands a WebSocket ticket, the mic streams PCM16 16 kHz up, the agent's voice (24 kHz) is played as it comes. What was said
@@ -380,7 +380,7 @@ function micReset(keep = null) {
   drawMic();
 }
 
-// 🖱 The screen for an agent that hears (spec §4.4, 2026-10-24 "know every control on the browser screen the mouse and keyboard can reach,
+// 🖱 The screen for an agent that hears (spec/agent.md §4.4, 2026-10-24 "know every control on the browser screen the mouse and keyboard can reach,
 // and operate it by voice"): it asks over the mic's socket, aetherUI (aether-sdk.js) lists and drives this page; the page open in the panel answers for itself
 // when it loads the SDK (its items are "f1", "f2"…). The mic button is never listed: the agent must not close its own ear.
 const UIQ = new Map();
@@ -491,7 +491,7 @@ function haltBar(j) {
   return bar;
 }
 // a step the agent cut short ends with …: click it for the whole text, again to close (2026-10-18 "the agent log in Tasks is cut short: end it with … and show it all on click")
-// as SoloGen v3 shows it: the … follows the text on the same line and the whole line is the switch (2026-10-18 "show the agent log in the message view with … the way SoloGen v3 does")
+// the … follows the text on the same line and the whole line is the switch
 const STEPOPEN = new Set();   // "<job>:<line>" kept open through redraws (a running job redraws at every step)
 function stepLine(j, t, i) {
   const many = t.includes("\n"), full = (j.fulls || {})[i] || (many ? t : "");   // a line with breaks (older ones, other agents) shows its first line and … too
@@ -743,7 +743,7 @@ const ENDWORD = { done: "done", failed: "failed", stopped: "stopped", "": "no me
 // how a task or a job ended, as a Material icon (its word is the tooltip: 2026-10-24 "can the done status be shown as an icon?")
 const ENDICON = { done: "CheckCircle", failed: "Error", stopped: "StopCircle", "": "RadioButtonUnchecked" };
 const endMark = (state, cls = "qst") => el("span", { class: `${cls} st-${state || "none"}`, title: ENDWORD[state] ?? state }, ENDICON[state] !== undefined || state === "" ? mui(ENDICON[state], { title: ENDWORD[state] ?? state }) : state);
-const sessOf = (t) => (t.ref || "").split("#")[0].trim();   // ref "robosim-live/sessions/12#n7-3" → session "robosim-live/sessions/12"
+const sessOf = (t) => (t.ref || "").split("#")[0].trim();   // ref "sim-viewer/sessions/12#n7-3" → session "sim-viewer/sessions/12"
 const sessName = (k) => { const m = k.match(/^(?:(.*)\/)?sessions\/([^/]+)$/); return m ? `${m[1] ? `🧩 ${m[1].split("/").pop()} · ` : ""}#${m[2]}` : k; };
 const clock = (x) => { const v = Math.max(0, Math.round(x)); return v < 60 ? `${v}s` : `${Math.floor(v / 60)}'${String(v % 60).padStart(2, "0")}s`; };   // 21s · 25'20s (2026-10-18 「[logo] · 25'20s」 ― the row keeps its room for the text)
 const since = (t) => (t ? clock(Date.now() / 1000 - t) : "");
@@ -1156,7 +1156,7 @@ function crumb(path) {   // workspace › a › b (click to open that folder in 
   return c;
 }
 function bar(path, ...acts) { $("#fbar").replaceChildren(fbtn("← Explorer", () => { view(false); toFocus(); }, { class: "fback" }), crumb(path), el("div", { class: "facts" }, navBox(), ...acts, el("span", { class: "fext", role: "group", "aria-label": "Controls of the open page" }))); }
-// The page's own controls (spec §3.1): text only, a few of them, and they die with the frame that sent them. The core's own (← → 📎 🔄) stay put
+// The page's own controls (spec/custom.md §3.1): text only, a few of them, and they die with the frame that sent them. The core's own (← → 📎 🔄) stay put
 function extBar(items) {
   const box = $("#fbar .fext"); if (!box) return;
   const str = (v, n) => String(v ?? "").slice(0, n), fire = async (x, value = "", full = x.full) => {
@@ -1167,7 +1167,7 @@ function extBar(items) {
     const opts = (Array.isArray(x.options) ? x.options : []).slice(0, 12).filter((o) => o && typeof o === "object")
       .map((o) => ({ head: o.head != null ? str(o.head, 24) : null, value: str(o.value, 60), label: str(o.label, 24), icon: str(o.icon, 40), title: str(o.title, 200) || null, full: "full" in o ? !!o.full : !!x.full }));
     const label = str(x.label, 24), title = str(x.title, 200) || null, off = x.disabled ? "" : null;
-    const words = (t, ic) => (ic && MUI[ic] ? [mui(ic, { class: t ? "lead" : "" }), t] : t);   // "icon": a Material name (spec §3.1) ―― a head emoji in the label works too
+    const words = (t, ic) => (ic && MUI[ic] ? [mui(ic, { class: t ? "lead" : "" }), t] : t);   // "icon": a Material name (spec/custom.md §3.1) ―― a head emoji in the label works too
     if (x.select) return el("label", { class: "fsel", title }, label || x.icon ? el("span", { class: "lbl" }, words(label, str(x.icon, 40))) : null,
       el("select", { "aria-label": label || title || x.id, disabled: off, onchange: (e) => fire(x, e.target.value, false) }, ...opts.filter((o) => o.head == null).map((o) => el("option", { value: o.value, title: o.title, selected: o.value === str(x.value, 60) ? "" : null }, o.label))));
     const main = fbtn(words(label, str(x.icon, 40)) || x.id, () => fire(x), { title, disabled: off, class: x.primary ? "primary" : null, "aria-label": title && !/\p{L}/u.test(label) ? title : null });   // an icon-only label (📎) is named by its title
@@ -1247,7 +1247,7 @@ async function zipGet(path, app, history = true) {   // the name in the URL and 
   document.body.append(a); a.click(); a.remove();
 }
 // An app that names its past data (aether.json "history") gets ▾ at the edge of ⬇: with it, or without it and its venvs ―― to try the app
-// elsewhere, where the venvs are made again (2026-10-25 "DLボタンの端をメニュー化して、過去データを含む、過去データを含まないを選べるように")
+// elsewhere, where the venvs are made again
 function zipBtn(path, app, attrs = {}) {
   const go = (history) => zipGet(path, app, history).catch((err) => alert(err.message));
   const main = fbtn("⬇", () => go(true), { class: "ficon", title: `Download this ${app ? "app" : "folder"} as ${zipName(path)}`, "aria-label": `Download this ${app ? "app" : "folder"} as zip`, ...attrs });
@@ -1302,7 +1302,7 @@ function thumb(r) {
   return el("span", { class: "fth vid" }, v);
 }
 function snapFrame() {   // a page that fills its viewport (height: 100vh) in a frame of 713.5 px scrolls by half a pixel, on and off every frame
-  const f = $("#fbody > iframe.fsite"), r = $("#fbody").getBoundingClientRect();   // (the scrollbar comes, the page shrinks, it goes ― robosim-live did): whole pixels only
+  const f = $("#fbody > iframe.fsite"), r = $("#fbody").getBoundingClientRect();   // (the scrollbar comes, the page shrinks, it goes): whole pixels only
   if (f && r.width) Object.assign(f.style, { flex: "none", width: `${Math.floor(r.width)}px`, height: `${Math.floor(r.height)}px` });
 }
 function frame(src, title, onload, ext = null) {   // ext: the preview extension (it may read its own folder)
@@ -1338,7 +1338,7 @@ async function openFile(path, o = {}) {   // o.top: scroll position to restore (
     catch (err) { post("open", { path, name, error: err.message }); }
   }, p);
 }
-// 🔄 reads the file again where it was scrolled to (keeping ← →). A preview that draws pages (manifest "render", spec §3.2) gets them drawn again
+// 🔄 reads the file again where it was scrolled to (keeping ← →). A preview that draws pages (manifest "render", spec/preview.md §3.2) gets them drawn again
 // too: one button for both (2026-10-24 "merge Reload and the preview refresh"). The page shows the pages it has until the new ones come
 async function reloadFile(path, p) {
   if (p && p.render) await api("api/render", { ext: p.id, path, force: true }).catch(() => {});   // not waited for: the page asks and waits itself
@@ -1517,7 +1517,7 @@ window.addEventListener("message", async (e) => {   // only from the frame we op
       reply({ ok: true, text: await r.text() });
     } catch (err) { reply({ ok: false, error: err.message }); }
   }
-  else if (d.type === "render") {   // pages a preview's own command draws (manifest "render", spec §3.2): the core runs it, the shell hands the images over
+  else if (d.type === "render") {   // pages a preview's own command draws (manifest "render", spec/preview.md §3.2): the core runs it, the shell hands the images over
     const ext = FRAME._ext, f = FRAME, fail = (error) => post("reply", { id: d.id, ok: false, error });
     if (!ext || o.kind !== "file") return fail("only a preview whose aether.json names render");
     try {

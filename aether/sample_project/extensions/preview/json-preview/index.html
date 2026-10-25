@@ -55,7 +55,7 @@ aether.on("open", (d) => {
   try { v = JSON.parse(d.text || ""); }
   catch (e) { doc.innerHTML = `<p class="err">Not valid JSON: ${esc(e.message)}</p><pre>${esc((d.text || "").slice(0, 20000))}</pre>`; return; }
   doc.innerHTML = node(null, v, "$", 0, (d.text || "").length > 200000 ? 2 : 99);
-  aether.bar([   // these live in the shell's bar, next to 📎 🔄 (spec §3.1)
+  aether.bar([   // these live in the shell's bar, next to 📎 🔄 (spec/custom.md §3.1)
     { id: "open", label: "⊞ Expand all", run: () => fold(true) },
     { id: "close", label: "⊟ Collapse all", run: () => fold(false) },
     { id: "dl", icon: "Download", label: "Download", title: "Download the file", run: () => aether.download() },

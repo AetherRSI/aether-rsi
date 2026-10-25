@@ -1,6 +1,6 @@
 // AetherRSI extension SDK (protocol 0.1). Include with <script src="aether-sdk.js"></script> ―― the core inlines it into your page.
-// Your page runs in a sandboxed iframe; this is the only channel to the core (spec/v0.1.md §3).
-// 🖱 aetherUI: what a mouse or keyboard can use on this page, numbered, and the actions on it (spec/v0.1.md §4.4). The shell uses it for
+// Your page runs in a sandboxed iframe; this is the only channel to the core (spec/custom.md §3).
+// 🖱 aetherUI: what a mouse or keyboard can use on this page, numbered, and the actions on it (spec/agent.md §4.4). The shell uses it for
 // itself and asks a framed page that loads this file for its own ("ui" → "ui.reply"), so an agent that hears the person can drive both.
 window.aetherUI = window.aetherUI || (function () {
   const SEL = 'button, a[href], input:not([type=hidden]), textarea, select, summary, [role=button], [role=link], [role=tab], [role=menuitem], [role=menuitemradio], '
@@ -131,7 +131,7 @@ if (window.parent !== window) (function () {   // the SDK proper: only in a fram
     const d = e.data;
     if (d.type === "reply" && pending[d.id]) { const p = pending[d.id]; delete pending[d.id]; return d.ok ? p.ok(p.raw ? d : d.text) : p.ng(new Error(d.error)); }
     if (d.type === "bar" && runs[d.id]) runs[d.id](d.value);
-    if (d.type === "ui") { let r; try { r = { ok: true, result: window.aetherUI.act(d) }; } catch (err) { r = { ok: false, error: err.message }; } return post("ui.reply", { id: d.id, ...r }); }   // 🖱 spec §4.4
+    if (d.type === "ui") { let r; try { r = { ok: true, result: window.aetherUI.act(d) }; } catch (err) { r = { ok: false, error: err.message }; } return post("ui.reply", { id: d.id, ...r }); }   // 🖱 spec/agent.md §4.4
     (handlers[d.type] || []).forEach((f) => f(d));
   });
   const ask = (type, data, raw = false) => { const id = ++seq; return new Promise((ok, ng) => { pending[id] = { ok, ng, raw }; post(type, { id, ...data }); }); };
@@ -155,7 +155,7 @@ if (window.parent !== window) (function () {   // the SDK proper: only in a fram
         (d) => new Response([204, 205, 304].includes(d.status) ? null : d.data, { status: d.status, statusText: d.statusText, headers: d.contentType ? { "Content-Type": d.contentType } : {} }),
         (e) => { throw new TypeError(e.message); });
     },
-    /** Previews whose aether.json names "render" (a command the core runs, spec §3.2): the pages it drew of the open file.
+    /** Previews whose aether.json names "render" (a command the core runs, spec/preview.md §3.2): the pages it drew of the open file.
      *  Resolves to {state: "ready"|"stale"|"none", running, error, key, dir, pages: [names], data: [ArrayBuffer]} ―― stale: drawn for an older
      *  version of the file (show it, then ask again with wait). force: draw again. wait: answer when the drawing ends.
      *  page + width (1920 · 2560 · 3840): that page drawn larger → {key, name, file, data: ArrayBuffer}. */
@@ -172,7 +172,7 @@ if (window.parent !== window) (function () {   // the SDK proper: only in a fram
       if (!(data instanceof ArrayBuffer)) return post("download", {});
       parent.postMessage({ aether: PROTOCOL, type: "download", name: String(name || "download"), mime: String(mime), data }, "*", [data]);
     },
-    /** Put your own controls in the shell's bar, next to 📎 🔄 (spec §3.1). Replaces the previous ones; [] clears.
+    /** Put your own controls in the shell's bar, next to 📎 🔄 (spec/custom.md §3.1). Replaces the previous ones; [] clears.
      *  items: [{id, label, icon?, title?, primary?, disabled?, options?: [{value, label, icon?, title?, full?} | {head}], select?, value?, full?, run?(value)}]
      *  icon: a Material icon name ("Download"), drawn in one colour before the label (load aether-icons.js to draw the same icons in your page).
      *  run is called on click (or "bar" {id, value} comes to on("bar")). full: the shell makes your frame full screen first. */

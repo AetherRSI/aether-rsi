@@ -1,4 +1,4 @@
-"""Pages a preview's own command draws (manifest `render`, spec §3.2), driven through the HTTP API with a fake renderer (no LibreOffice)."""
+"""Pages a preview's own command draws (manifest `render`, spec/preview.md §3.2), driven through the HTTP API with a fake renderer (no LibreOffice)."""
 
 import json
 import os

@@ -44,7 +44,7 @@ FREE = ("not exists (select 1 from jobs r join tasks rt on rt.id = r.task where 
 
 
 def session_of(ref: str, task: str) -> str:
-    """The session a task belongs to: its ref up to "#" (e.g. "robosim-live/sessions/12"), else the task alone."""
+    """The session a task belongs to: its ref up to "#" (e.g. "sim-viewer/sessions/12"), else the task alone."""
     return (ref or "").split("#")[0].strip() or f"task:{task}"
 
 
@@ -57,7 +57,7 @@ def _id() -> str:
 
 
 def check_ref(ref) -> str:
-    """A task's ref: where an app keeps it, e.g. "robosim-live/sessions/12#n7-3". The core never reads it; the shell bundles
+    """A task's ref: where an app keeps it, e.g. "sim-viewer/sessions/12#n7-3". The core never reads it; the shell bundles
     tasks by the part before "#" (the session). One line, up to 300 characters; "" = none."""
     if not isinstance(ref, str) or "\n" in ref or "\r" in ref or len(ref) > 300:
         raise ValueError("ref must be one line of up to 300 characters")

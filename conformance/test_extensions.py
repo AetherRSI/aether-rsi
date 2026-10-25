@@ -165,7 +165,7 @@ AGENT = {"aether": "0.1", "kind": "agent", "id": "claude-code", "label": "Mine",
 
 
 class Spare(unittest.TestCase):
-    """aether/fallback/ fills only an id nobody else has, so a workspace without extensions/ still has claude-code (spec §2)."""
+    """aether/fallback/ fills only an id nobody else has, so a workspace without extensions/ still has claude-code (spec/custom.md §2)."""
 
     def test_the_shipped_spares_conform(self):
         from aether.server import SPARE
@@ -227,7 +227,7 @@ def two_authors() -> Path:
 
 
 class TwoAuthors(unittest.TestCase):
-    """Extensions from different authors run side by side; the person decides what they would fight over (spec §2.1)."""
+    """Extensions from different authors run side by side; the person decides what they would fight over (spec/custom.md §2.1)."""
 
     def setUp(self):
         self.ws = two_authors()

@@ -1,4 +1,4 @@
-"""Extensions: a folder with an `aether.json` manifest (spec/v0.1.md). The core only reads manifests; it never imports extension code."""
+"""Extensions: a folder with an `aether.json` manifest (spec/custom.md). The core only reads manifests; it never imports extension code."""
 
 from __future__ import annotations
 

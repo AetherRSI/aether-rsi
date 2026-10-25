@@ -16,7 +16,7 @@
   POST /api/jobs/<id>/move    {before?}  a queued job moves just before another queued job of its session (before: its id), or last (none) ―― the order it runs in
                               (409 once it, or one it passes, runs or ended; 400 when before is not one of its session's queued jobs)
   POST /api/jobs/<id>/audio   → {ticket}: 🎙 single use, 30 s, for GET /api/jobs/<id>/audio?ticket= (Upgrade: websocket) ―― the person's voice to the
-                              job's agent and its voice back (manifest audio: true, spec §4.2; POST /api/send voice: true starts a job for it)
+                              job's agent and its voice back (manifest audio: true, spec/agent.md §4.2; POST /api/send voice: true starts a job for it)
   POST /api/jobs/<id>/parallel  {confirm?}  ⚡ a queued job leaves its busy session for a new task of its own and starts now (409 once it runs or ended; 409 conflict as for send)
   POST /api/config            {agent?, open_with?, workspace?}  the person's choices (shared keys only; core_locked is not one)
   GET  /api/files?path=       one folder of the workspace (409 until a workspace is set)
@@ -112,7 +112,7 @@ def bundle(html: str, find) -> str:
     return TAG.sub(swap, html)
 
 
-SHARED = ("agent", "open_with", "workspace")   # keys the shell may write. Extensions never write them (spec §2.1)
+SHARED = ("agent", "open_with", "workspace")   # keys the shell may write. Extensions never write them (spec/custom.md §2.1)
 RECENT = 10   # config `recent`: the workspaces used last, newest first. The core writes it when the workspace changes; the shell only reads it
 
 
@@ -121,10 +121,10 @@ class Started(Exception):
 
 
 class Forbidden(Exception):
-    """An agent's dispatch the core refuses (spec §4.3): 403."""
+    """An agent's dispatch the core refuses (spec/agent.md §4.3): 403."""
 
 
-DISPATCH_MAX = 20   # sends per job (spec §4.3)
+DISPATCH_MAX = 20   # sends per job (spec/agent.md §4.3)
 
 
 class Conflict(Exception):
@@ -209,7 +209,7 @@ class Core:
         self.renders = render.Renders(self.data / "render", lambda: self.ext()["preview"], lambda rel: files.resolve(self.need_ws(), rel, self.deny()),
                                       lambda: self.settings.get()[0]["env"])
         self.runner.after = self.drawn_ahead
-        self.voice = voice.Voice()   # 🎙 the shell's mic ⇄ an agent with audio: true (spec §4.2)
+        self.voice = voice.Voice()   # 🎙 the shell's mic ⇄ an agent with audio: true (spec/agent.md §4.2)
         self.runner.voice_out, self.runner.voice_end = self.voice.out, self.voice.ended
         self.runner.voice_ui = self.voice.ui
         self.pastes = paste.Pastes(self.data / "paste", lambda: [j["prompt"] for j in self.store.queue()])
@@ -413,7 +413,7 @@ class Core:
             raise Conflict(hits)
 
     def send(self, b: dict, by: str = None) -> dict:
-        """by: the running job of an agent with dispatch: true that sends it with its AETHER_TOKEN (spec §4.3)."""
+        """by: the running job of an agent with dispatch: true that sends it with its AETHER_TOKEN (spec/agent.md §4.3)."""
         text = str(b.get("text") or "").strip()
         if not text:
             raise ValueError("nothing to send")
@@ -462,7 +462,7 @@ class Core:
         return {"job": j["id"], "task": task}
 
     def dispatch(self, b: dict, text: str, by: str) -> dict:
-        """An agent hands work to another agent (spec §4.3): as the person would send it, minus voice and the approval (a conflict is
+        """An agent hands work to another agent (spec/agent.md §4.3): as the person would send it, minus voice and the approval (a conflict is
         the agent's to report, 409). Not to an agent that dispatches too (no chains), and up to DISPATCH_MAX sends per job."""
         if b.get("append") or b.get("edit") or b.get("voice") or b.get("confirm"):
             raise Forbidden("an agent may send, or inject into a running job; not append, edit, voice or confirm")
@@ -493,7 +493,7 @@ class Core:
         return r
 
     def voiced(self, j: dict, b: dict):
-        """Sent from 🎙 (voice: true): its agent hears in start that the person is about to speak (spec §4.2)."""
+        """Sent from 🎙 (voice: true): its agent hears in start that the person is about to speak (spec/agent.md §4.2)."""
         if b.get("voice"):
             self.runner.voiced.add(j["id"])
 
@@ -647,7 +647,7 @@ def handler(core: Core):
                     self.wfile.write(chunk)
 
         def _port(self, path: str, method: str):
-            """GET|POST /api/port/<port>/<rest>: the core fetches http://127.0.0.1:<port>/<rest> for an app's page (spec §3 fetch). The shell uses it
+            """GET|POST /api/port/<port>/<rest>: the core fetches http://127.0.0.1:<port>/<rest> for an app's page (spec/app.md fetch). The shell uses it
             when the browser cannot reach this machine's loopback ―― the page is on another host (Google Cloud Shell's web preview, a tunnel) and
             127.0.0.1 there is the person's own machine (and Chrome refuses a public page's requests to loopback). Only from the shell
             (X-Aether: 1, not a sandboxed frame) and only to a port the app's aether.json (X-Aether-App: its folder) names in "ports"."""
@@ -815,7 +815,7 @@ def handler(core: Core):
                 except (files.Outside, ValueError) as e:
                     return self._json({"error": str(e)}, 403)
             if self.headers.get("X-Aether") != "1" or self.headers.get("Origin") == "null":
-                tok = (self.headers.get("Authorization") or "").removeprefix("Bearer ").strip()   # an agent's AETHER_TOKEN (spec §4.3)
+                tok = (self.headers.get("Authorization") or "").removeprefix("Bearer ").strip()   # an agent's AETHER_TOKEN (spec/agent.md §4.3)
                 by = core.runner.bearer(tok) if tok and self.headers.get("Origin") is None else None
                 if not by or not (path == "/api/send" or (path.startswith("/api/jobs/") and path.endswith("/stop"))):
                     return self._json({"error": "forbidden"}, 403)

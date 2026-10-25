@@ -1,4 +1,4 @@
-"""The queue worker. Runs jobs through an agent extension (stdin/stdout JSON lines, spec/v0.1.md §4), one task per session:
+"""The queue worker. Runs jobs through an agent extension (stdin/stdout JSON lines, spec/agent.md §4), one task per session:
 the first waiting job of every session that has nothing running starts at once, each in its own agent process and thread
 (a session is a task's ref up to "#", or the task alone). The next job of a busy session waits for it. No limit on how many sessions run."""
 
@@ -39,7 +39,7 @@ def compose(text: str, quotes) -> str:
     return text.strip() + (QUOTED + "\n\n".join(blocks) if blocks else "")
 
 
-RULES = "AGENTS.md"   # the workspace's rules for every agent, whatever file its own tool reads (2026-10-25 "Gemini も使うので汎用の名前に")
+RULES = "AGENTS.md"   # the workspace's rules for every agent, whatever file its own tool reads (one name for Claude Code and Gemini alike)
 
 
 def told(prompt: str, ws, session) -> str:
@@ -103,11 +103,11 @@ class Runner:
         self.handing = False   # a swap is taking the live jobs over: readers stop where they are
         self.live = {}   # job id -> handle (see _handle)
         self.stopping = set()
-        self.voiced = set()   # jobs sent from 🎙: their start says "audio": true (spec §4.2). In memory: a swap while one still waits forgets it
+        self.voiced = set()   # jobs sent from 🎙: their start says "audio": true (spec/agent.md §4.2). In memory: a swap while one still waits forgets it
         self.voice_out = lambda jid, ev: None   # what an agent says for the shell's ears (voice.Voice.out); the core sets it
         self.voice_end = lambda jid, state: None   # a job settled: its mic hears the end (voice.Voice.ended)
-        self.voice_ui = lambda jid, req: False   # an agent asks the shell's screen (spec §4.4): True when a mic took it (voice.Voice.ui)
-        self.api = ""   # the core's base URL, for agents with dispatch: true (spec §4.3); the core sets it
+        self.voice_ui = lambda jid, req: False   # an agent asks the shell's screen (spec/agent.md §4.4): True when a mic took it (voice.Voice.ui)
+        self.api = ""   # the core's base URL, for agents with dispatch: true (spec/agent.md §4.3); the core sets it
         self.tokens = {}   # AETHER_TOKEN -> the job it was made for (while that job runs; a swap hands them over)
         self.sends = {}   # job id -> how many messages it dispatched
 
@@ -172,7 +172,7 @@ class Runner:
         self.voiced.discard(jid)
         self.logs.mkdir(parents=True, exist_ok=True)
         extra, tok = ({"AETHER_URL": self.api.rstrip("/")} if self.api else {}), None   # the core's URL: a folder's scripts reach the core here, whatever port it runs on
-        if a.get("dispatch") and self.api:   # spec §4.3: the core's API, with a key good for this job only
+        if a.get("dispatch") and self.api:   # spec/agent.md §4.3: the core's API, with a key good for this job only
             tok = secrets.token_urlsafe(24)
             self.tokens[tok] = jid
             extra |= {"AETHER_API": self.api, "AETHER_TOKEN": tok}
@@ -269,7 +269,7 @@ class Runner:
             self._note(self.store.add_line, jid, str(ev["step"])[:300], str(ev["full"]) if ev.get("full") else None)   # full: the step's whole text (optional)
         if ev.get("session"):
             self._note(self.store.set_session, h["task"], h["agent"], str(ev["session"]))
-        if ev.get("audio") or ev.get("heard") or ev.get("said") or ev.get("interrupted"):   # 🎙 spec §4.2: the words are kept, the sound only played
+        if ev.get("audio") or ev.get("heard") or ev.get("said") or ev.get("interrupted"):   # 🎙 spec/agent.md §4.2: the words are kept, the sound only played
             for k, mark in (("heard", "🎙 "), ("said", "🔊 ")):
                 if ev.get(k):
                     t = str(ev[k]).strip()
@@ -278,7 +278,7 @@ class Runner:
                 self.voice_out(jid, ev)
             except Exception as e:  # noqa: BLE001 ―― a broken ear must not stop the reading
                 print(f"[voice] could not pass on to the shell: {e!r}", file=sys.stderr, flush=True)
-        if isinstance(ev.get("ui"), dict):   # 🖱 spec §4.4: the shell's screen, through the mic's socket
+        if isinstance(ev.get("ui"), dict):   # 🖱 spec/agent.md §4.4: the shell's screen, through the mic's socket
             try:
                 sent = self.voice_ui(jid, ev["ui"])
             except Exception as e:  # noqa: BLE001
@@ -403,19 +403,19 @@ class Runner:
         return bool(h and pcm) and self._write(h, {"type": "audio", "data": base64.b64encode(pcm).decode()})
 
     def bearer(self, tok: str):
-        """The running job an AETHER_TOKEN was made for, or None (spec §4.3)."""
+        """The running job an AETHER_TOKEN was made for, or None (spec/agent.md §4.3)."""
         jid = self.tokens.get(tok or "")
         return jid if jid and jid in self.live else None
 
     def ui_result(self, jid: str, m: dict) -> bool:
-        """🖱 The shell's answer to a screen request, into the agent that asked (spec §4.4)."""
+        """🖱 The shell's answer to a screen request, into the agent that asked (spec/agent.md §4.4)."""
         h = self.live.get(jid)
         ans = {"type": "ui", "id": m.get("id")}
         ans.update({"result": m["result"]} if "result" in m else {"error": str(m.get("error") or "no answer")})
         return bool(h) and self._write(h, ans)
 
     def mic_end(self, jid: str) -> bool:
-        """The person closed the mic: the agent finishes the conversation (spec §4.2)."""
+        """The person closed the mic: the agent finishes the conversation (spec/agent.md §4.2)."""
         h = self.live.get(jid)
         return bool(h) and self._write(h, {"type": "audio", "end": True})
 

@@ -1,10 +1,10 @@
-"""The smallest agent: echoes the prompt back. Shows every part of the agent protocol (spec/v0.1.md §4).
+"""The smallest agent: echoes the prompt back. Shows every part of the agent protocol (spec/agent.md §4).
 
 stdin  (from the core): {"type": "start", "prompt", "session", "cwd", "protect"}  then any number of  {"type": "inject", "text"}
 stdout (to the core):   {"step": "..."}  {"session": "..."}  ...  {"done": true, "reply": "..."}   or  {"error": "..."}
 Write "/slow" in the message to get a few seconds in which you can try ↪ Inject and ⏹ Stop; "/long" sends a step cut short with its whole text (full). It never writes a file, so it declares "guard": true.
-🎙 Voice (spec §4.2, "audio": true): sent from the mic, it plays the person's voice back to them (16 kHz → 24 kHz) until the mic closes,
-and says how long it heard. "/ui" in the message asks the shell's screen once (spec §4.4) and says how many items it saw.
+🎙 Voice (spec/agent.md §4.2, "audio": true): sent from the mic, it plays the person's voice back to them (16 kHz → 24 kHz) until the mic closes,
+and says how long it heard. "/ui" in the message asks the shell's screen once (spec/agent.md §4.4) and says how many items it saw.
 """
 
 import array
@@ -60,7 +60,7 @@ def main():
     if start.get("audio"):
         return voice(sid, start["prompt"])
     out(step=f"📥 got {len(start['prompt'])} characters ({'continuing' if start.get('session') else 'new'} session {sid[:8]})")
-    if "/long" in start["prompt"]:   # a step cut short, with its whole text (spec §4 "full")
+    if "/long" in start["prompt"]:   # a step cut short, with its whole text (spec/agent.md §4 "full")
         out(step="📜 " + start["prompt"][:40], full="📜 " + start["prompt"])
     injected = []
     end = time.time() + (6 if "/slow" in start["prompt"] else 0)

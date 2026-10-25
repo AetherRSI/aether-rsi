@@ -1,4 +1,4 @@
-"""🎙 The person's voice to a running agent and its voice back (spec/v0.1.md §4.2). Standard library only: a WebSocket (RFC 6455,
+"""🎙 The person's voice to a running agent and its voice back (spec/agent.md §4.2). Standard library only: a WebSocket (RFC 6455,
 server side, just what a browser sends) on the handler's own connection.
 
   shell ──WebSocket──▶ core ──stdin JSON lines──▶ agent     binary frame = PCM16 16 kHz  →  {"type": "audio", "data": base64}
@@ -138,7 +138,7 @@ class Voice:
             pass
 
     def ui(self, jid: str, req: dict) -> bool:
-        """🖱 An agent's screen request to the shell that holds this job's mic (spec §4.4). False: no mic to ask."""
+        """🖱 An agent's screen request to the shell that holds this job's mic (spec/agent.md §4.4). False: no mic to ask."""
         ws = self.ears.get(jid)
         if not ws:
             return False

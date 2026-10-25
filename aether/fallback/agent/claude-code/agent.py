@@ -1,4 +1,4 @@
-"""Claude Code as an AetherRSI agent: translates the agent protocol (spec/v0.1.md §4) to `claude -p --input-format stream-json`.
+"""Claude Code as an AetherRSI agent: translates the agent protocol (spec/agent.md §4) to `claude -p --input-format stream-json`.
 
 - The prompt goes in through stdin, so ↪ Inject can add to the running conversation.
 - An image pasted into ③ (a quote "🖼 Pasted image n" with its path) goes in as an image block (user()).

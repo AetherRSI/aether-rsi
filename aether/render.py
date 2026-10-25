@@ -1,4 +1,4 @@
-"""Pages a preview has drawn ahead of time (manifest `render`, spec §3.2).
+"""Pages a preview has drawn ahead of time (manifest `render`, spec/preview.md §3.2).
 
 A preview page runs in a sandboxed frame: it cannot start a program. Some files can only be drawn faithfully by one (a .pptx by
 LibreOffice). Such a preview names a command in `render`; the core runs it as a separate process, like an agent, and keeps what it

@@ -220,11 +220,11 @@ class Api(unittest.TestCase):
 
     def test_a_task_carries_a_ref(self):
         """ref: where an app keeps the task (the shell bundles by the part before #). Stored as given, never read; one line, 300 at most."""
-        _, t = self.live.json("api/tasks", {"title": "with ref", "ref": "robosim-live/sessions/12#n7-3"})
+        _, t = self.live.json("api/tasks", {"title": "with ref", "ref": "sim-viewer/sessions/12#n7-3"})
         listed = {x["id"]: x for x in self.live.json("api/tasks")[1]}
-        self.assertEqual(listed[t["id"]]["ref"], "robosim-live/sessions/12#n7-3")
-        self.assertEqual(self.live.json(f"api/tasks/{t['id']}", {"ref": "robosim-live/sessions/13#n1"})[1]["ref"], "robosim-live/sessions/13#n1")
-        self.assertEqual(self.live.json(f"api/tasks/{t['id']}", {"title": "renamed"})[1]["ref"], "robosim-live/sessions/13#n1")   # untouched when not given
+        self.assertEqual(listed[t["id"]]["ref"], "sim-viewer/sessions/12#n7-3")
+        self.assertEqual(self.live.json(f"api/tasks/{t['id']}", {"ref": "sim-viewer/sessions/13#n1"})[1]["ref"], "sim-viewer/sessions/13#n1")
+        self.assertEqual(self.live.json(f"api/tasks/{t['id']}", {"title": "renamed"})[1]["ref"], "sim-viewer/sessions/13#n1")   # untouched when not given
         for bad in ("a\nb", "x" * 301, 7):
             self.assertEqual(self.live.call("api/tasks", {"title": "bad", "ref": bad})[0], 400, bad)
         _, r = self.live.json("api/send", {"text": "new with ref", "agent": "echo-agent", "ref": "img3d/sessions/4#n3"})
@@ -543,16 +543,16 @@ class Api(unittest.TestCase):
         self.assertEqual(self.live.call("api/read?path=../aether/server.py")[0], 403)
         code, h, _ = self.live.call("files/apps/hello-app/index.html")
         self.assertEqual(code, 200)
-        self.assertEqual(h["Content-Security-Policy"], "sandbox allow-scripts allow-modals")   # modals: print (spec 3)
+        self.assertEqual(h["Content-Security-Policy"], "sandbox allow-scripts allow-modals")   # modals: print (spec/custom.md §3)
         _, _, page = self.live.call("x/json-preview/index.html")
         self.assertIn(b"window.aether", page)   # the SDK is inlined (a sandboxed page behind a proxy cannot fetch it)
         self.assertNotIn(b'<script src="aether-sdk.js"></script>', page)
         code, h, body = self.live.call("x/json-preview/aether-sdk.js")
         self.assertEqual(code, 200)
         self.assertIn(b"window.aether", body)
-        for name in (b"bar(", b"fullscreen("):   # a page's own controls in the shell's bar (spec 3.1)
+        for name in (b"bar(", b"fullscreen("):   # a page's own controls in the shell's bar (spec/custom.md §3.1)
             self.assertIn(name, body)
-        code, _, body = self.live.call("x/json-preview/aether-icons.js")   # the shell's one-colour icons, beside any entry (spec 3)
+        code, _, body = self.live.call("x/json-preview/aether-icons.js")   # the shell's one-colour icons, beside any entry (spec/custom.md §3)
         self.assertEqual(code, 200)
         for name in (b"function mui(", b"function muiText(", b"AttachFile:"):
             self.assertIn(name, body)

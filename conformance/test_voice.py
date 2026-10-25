@@ -1,4 +1,4 @@
-"""🎙 Voice (spec §4.2): the ticket door, the WebSocket, and sound both ways through the echo agent (it plays the voice back)."""
+"""🎙 Voice (spec/agent.md §4.2): the ticket door, the WebSocket, and sound both ways through the echo agent (it plays the voice back)."""
 
 import base64
 import json
@@ -198,7 +198,7 @@ print(json.dumps({"done": True, "reply": json.dumps({k: v[0] for k, v in got.ite
 
 @unittest.skipUnless(SAMPLES, NO_SAMPLES)
 class Dispatch(unittest.TestCase):
-    """spec §4.3: an agent with dispatch: true sends to other agents with its job's AETHER_TOKEN."""
+    """spec/agent.md §4.3: an agent with dispatch: true sends to other agents with its job's AETHER_TOKEN."""
 
     @classmethod
     def setUpClass(cls):
@@ -239,7 +239,7 @@ class Dispatch(unittest.TestCase):
 
 @unittest.skipUnless(SAMPLES, NO_SAMPLES)
 class Screen(unittest.TestCase):
-    """spec §4.4: an agent's screen request goes to the shell over the mic's socket, and the answer back into the agent."""
+    """spec/agent.md §4.4: an agent's screen request goes to the shell over the mic's socket, and the answer back into the agent."""
 
     @classmethod
     def setUpClass(cls):
