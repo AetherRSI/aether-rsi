@@ -1,13 +1,14 @@
 <!doctype html>
 <html lang="en">
 <head>
+<link rel="icon" href="data:,">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>AetherRSI</title>
 <link rel="stylesheet" href="static/core.css">
 </head>
 <body>
-<header id="head"><b>AetherRSI</b><span class="crumb" id="ver"></span><span id="warn" hidden></span>
+<header id="head"><b>AetherRSI</b><span class="crumb" id="ver"></span><span id="warn" hidden></span><span id="down" role="alert" hidden></span>
   <button id="panel-btn" type="button" hidden aria-label="Open the panel" title="Open the panel">▥<span class="lbl"> Panel</span></button></header>
 <main id="main">
   <section id="left" aria-label="Tasks and conversation">
@@ -35,6 +36,7 @@
       <div class="fx">
         <aside id="ftree" tabindex="0" aria-label="Explorer">
           <div class="fx-head"><span>EXPLORER</span><span><button type="button" id="fpick" hidden></button><button type="button" id="fws" title="Change the workspace folder">⚙</button><button type="button" id="frefresh" title="Refresh">⟳</button><button type="button" id="fcollapse" title="Collapse folders">⊟</button></span></div>
+          <div id="ffav" role="tree" aria-label="Favorites" hidden></div>
           <div class="fx-root" id="froot"></div>
           <div id="frows" role="tree"></div>
         </aside>

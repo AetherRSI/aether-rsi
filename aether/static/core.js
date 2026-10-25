@@ -106,16 +106,17 @@ function clearQuotes() {   // the ✕ of every chip at once (the 📨 To: stays)
   was.filter((q) => q.paste).forEach((q) => api(`api/paste/${q.paste}/drop`, {}).catch(() => {}));
   $("#say").focus();
 }
-function chip(text, tip, off, cls, n, img) {   // img: a thumbnail before the text (a pasted image)
+function chip(text, tip, off, cls, n, img) {   // img: a thumbnail before the text (a pasted image). text: a string, or parts each drawn with its own head icon
   const x = el("button", { type: "button", "aria-label": tip, onclick: off }, "✕"), pic = img ? el("img", { class: "qimg", src: img, alt: "" }) : null;
-  if (!n) return el("span", { class: cls, title: text }, pic, el("span", {}, text), x);
+  const all = [text].flat().join("");
+  if (!n) return el("span", { class: cls, title: all }, pic, el("span", {}, text), x);
   const at = el("b", { class: "at", role: "button", tabindex: "0", "aria-label": `Insert @${n}`, onkeydown: (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); insertAt(n); } } }, `@${n}`);
-  return el("span", { class: `${cls} mention`, title: `${text}\nClick to insert @${n} at the cursor`, onclick: (e) => { if (!e.target.closest("button")) insertAt(n); } }, at, pic, el("span", {}, text), x);
+  return el("span", { class: `${cls} mention`, title: `${all}\nClick to insert @${n} at the cursor`, onclick: (e) => { if (!e.target.closest("button")) insertAt(n); } }, at, pic, el("span", {}, text), x);
 }
 function drawDest() {
   const d = $("#dest");
   d.hidden = !DEST && !QUOTES.length;
-  d.replaceChildren(...(DEST ? [chip(`📨 To: ${DEST.title}`, "Remove the destination (back to 🧭 All)", () => openView(null), "chip")] : []),
+  d.replaceChildren(...(DEST ? [chip(["📨 To: ", DEST.title], "Remove the destination (back to 🧭 All)", () => openView(null), "chip")] : []),
     ...QUOTES.map((q, i) => chip(quoteName(q), q.edit ? "Stop editing (the queued message stays as it was)" : q.paste ? "Remove the image (its file goes too)" : "Remove the quote",
       () => { setQuotes(QUOTES.filter((_, k) => k !== i)); if (q.paste) api(`api/paste/${q.paste}/drop`, {}).catch(() => {}); },   // a message that still quotes it keeps it (the server checks)
       q.inject ? "chip quote inject" : q.append || q.edit ? "chip quote queued" : "chip quote", q.n || 0, q.paste ? `api/paste/${q.paste}` : null)),
@@ -335,7 +336,9 @@ async function micConnect() {
   ws.onclose = () => {
     if (MIC.ws !== ws || MIC.job !== jid) return;   // closed on purpose, or the job ended
     MIC.ws = null;
-    if (MIC.tries++ < 5) setTimeout(micConnect, 1000 * MIC.tries); else micReset();
+    if (MIC.tries++ < 5) return setTimeout(micConnect, 1000 * MIC.tries);
+    micReset();   // said, not silent: the agent goes on talking to nobody, and the person took it for a talk that does not answer (2026-10-25)
+    bubble("bot", "❌ The mic lost its connection to the core (tried 5 times): the agent no longer hears you. Press 🎙 again, or ⏹ Stop that job");
   };
 }
 async function micCapture() {
@@ -1068,7 +1071,7 @@ function drawTree() {
     const open = r.dir && OPEN.has(r.path) && KIDS.has(r.path);
     const sel = PICK.size ? PICK.has(r.path) : CUR && r.path === CUR.path;
     out.push(el("div", { class: `frow${r.dir ? " dir" : ""}${sel ? " sel" : ""}${r.path === FOCUS ? " focus" : ""}`, "aria-selected": PICK.size ? String(sel) : null, role: "treeitem", "data-path": r.path, title: r.path, "aria-expanded": r.dir ? String(open) : null },
-      ...Array.from({ length: depth }, () => el("span", { class: "ig" })), el("span", { class: "tw" }), r.dir ? (r.app ? el("span", { class: "fapp" }, "🧩") : null) : icon(r.name), el("span", { class: "nm" }, r.name)));
+      ...Array.from({ length: depth }, () => el("span", { class: "ig" })), el("span", { class: "tw" }), r.dir ? (r.app ? el("span", { class: "fapp" }, "🧩") : null) : icon(r.name), el("span", { class: "nm" }, r.name), star(isFav(r.path))));
     out[out.length - 1]._r = r;
     if (open) walk(r.path, depth + 1);
   });
@@ -1078,6 +1081,36 @@ function drawTree() {
   const b = $("#fpick");
   b.hidden = !PICK.size;
   if (PICK.size) { b.replaceChildren(...lead(`📎 ${PICK.size}`)); b.title = b.ariaLabel = `Quote the ${PICK.size} selected in ③ (Esc: clear the selection)`; }
+  drawFav();
+}
+// ★ Favorites: rows starred in the tree stay listed above it (2026-10-25 "favorites in the EXPLORER"). Kept in this browser per workspace,
+// like the open folders. Only the path is kept: an app's manifest is read fresh when it opens. A star whose file has gone stays, greyed, until unstarred
+let FAV = [];   // [{path, dir}] of this workspace, in the order starred
+const GONE = new Set();
+const favAll = () => { try { return JSON.parse(LS.aetherFav || "{}"); } catch { return {}; } };
+const favLoad = () => { FAV = favAll()[INFO.workspace_path] || []; };
+const isFav = (p) => FAV.some((f) => f.path === p);
+const star = (on) => el("button", { type: "button", class: `fstar${on ? " on" : ""}`, tabindex: "-1", title: on ? "Remove from favorites" : "Add to favorites", "aria-label": on ? "Remove from favorites" : "Add to favorites", "aria-pressed": String(on) }, mui(on ? "Star" : "StarBorder"));
+function favToggle(r) {
+  FAV = isFav(r.path) ? FAV.filter((f) => f.path !== r.path) : [...FAV, { path: r.path, dir: !!r.dir }];
+  GONE.delete(r.path);
+  const all = favAll();
+  if (FAV.length) all[INFO.workspace_path] = FAV; else delete all[INFO.workspace_path];
+  LS.aetherFav = JSON.stringify(all); drawTree();
+}
+function drawFav() {
+  const box = $("#ffav"); box.hidden = !FAV.length;
+  box.replaceChildren(...(FAV.length ? [el("div", { class: "fx-sub" }, mui("Star"), "FAVORITES")] : []), ...FAV.map((f) => {
+    const name = f.path.split("/").pop(), gone = GONE.has(f.path);
+    return el("div", { class: `frow ffrow${f.dir ? " dir" : ""}${gone ? " gone" : ""}${CUR && CUR.path === f.path ? " sel" : ""}`, role: "treeitem", "data-path": f.path, title: gone ? `${f.path} (no longer there)` : f.path },
+      f.dir ? el("span", { class: "ic" }, mui("Folder")) : icon(name), el("span", { class: "nm" }, name), el("span", { class: "fwhere" }, parent(f.path)), star(true));
+  }));
+}
+async function favOpen(path) {   // the row as its folder lists it now
+  const r = ((await kids(parent(path)).catch(() => null))?.items || []).find((x) => x.path === path);
+  if (!r) { GONE.add(path); return drawFav(); }
+  GONE.delete(path); pickClear(); ANCHOR = path;
+  await openRow(r); reveal(path).catch(() => {});
 }
 const shown = () => [...document.querySelectorAll("#frows .frow")];
 function pickToggle(row) {   // ⌘/Ctrl + click: the row the person was on comes along, as in VS Code
@@ -1344,6 +1377,7 @@ async function filesStart() {   // first time the tab opens: the tree, then what
   if (filesUp) { if (treeStale) { treeStale = false; refreshTree().catch(() => {}); } return; }
   filesUp = true;
   $("#froot").textContent = INFO.workspace; $("#froot").title = INFO.workspace_path;
+  favLoad();
   await kids("").catch(() => {}); await loadOpen(); drawTree();
   const c = CUR;
   if (c) (c.kind === "dir" ? openDir(c.path) : c.kind === "app" ? Promise.resolve(openApp(c.path, c.app)) : openFile(c.path)).then(() => view(false)).catch(empty);
@@ -1353,6 +1387,7 @@ function empty() { $("#fbar").replaceChildren(); $(".fmain").classList.remove("f
 function filesEvents() {
   $("#frows").addEventListener("click", (e) => {
     const r = e.target.closest(".frow"); if (!r) return;
+    if (e.target.closest(".fstar")) return favToggle(r._r);
     if (e.shiftKey) return pickRange(r.dataset.path);
     if (e.metaKey || e.ctrlKey) return pickToggle(r);
     pickClear(); ANCHOR = FOCUS = r.dataset.path;
@@ -1378,6 +1413,11 @@ function filesEvents() {
     e.preventDefault();
   });
   $("#fpick").addEventListener("click", quotePick);
+  $("#ffav").addEventListener("click", (e) => {
+    const r = e.target.closest(".frow"); if (!r) return;
+    if (e.target.closest(".fstar")) return favToggle({ path: r.dataset.path });
+    favOpen(r.dataset.path);
+  });
   $("#fcollapse").addEventListener("click", () => { OPEN.clear(); saveOpen(); drawTree(); });
   $("#frefresh").addEventListener("click", () => refreshTree());
   $(".fsash").addEventListener("pointerdown", (e) => {   // drag to resize the tree
@@ -1497,8 +1537,11 @@ window.addEventListener("message", async (e) => {   // only from the frame we op
     const f = FRAME, ports = await (f._ports ||= api(`api/files?path=${encodeURIComponent(o.path)}`).then((x) => x.app?.ports || [], () => []));   // the manifest as it is now, once per frame: CUR comes back from localStorage as it was saved
     if (!ports.includes(port)) return fail("apps may fetch only from the ports their aether.json names");
     const method = d.method === "POST" ? "POST" : "GET", type = d.contentType ? { "Content-Type": String(d.contentType) } : {};
+    const relay = /\/proxy\/\d+\//.test(location.pathname), near = /^(127\.0\.0\.1|localhost|\[::1\])$/.test(location.hostname);
+    const via = relay || near ? appUrl(u.href) : `api/port/${port}${u.pathname}${u.search}`;   // another host (Cloud Shell's web preview…): 127.0.0.1 is not reachable from this browser, so the core fetches it
+    const head = relay || near ? type : { ...type, "X-Aether": "1", "X-Aether-App": o.path };
     try {
-      const r = await fetch(appUrl(u.href), { method, headers: type, body: method === "POST" ? d.body : undefined, cache: "no-store", credentials: "include" });
+      const r = await fetch(via, { method, headers: head, body: method === "POST" ? d.body : undefined, cache: "no-store", credentials: "include" });
       const data = await r.arrayBuffer();
       if (FRAME && CUR === o) FRAME.contentWindow.postMessage({ aether: INFO && INFO.protocol, type: "reply", id: d.id, ok: true, status: r.status, statusText: r.statusText, contentType: r.headers.get("Content-Type") || "", data }, "*", [data]);
     } catch (err) { fail(err.message); }
@@ -1563,6 +1606,7 @@ async function poll() {
   busy = true;
   try {
     const { rev, reloading } = await api("api/poll");
+    down(null);
     if (rev !== REV) {
       REV = rev; RELOADING = !!reloading;
       await sync();
@@ -1570,7 +1614,14 @@ async function poll() {
       if (treeStale && filesUp) { treeStale = false; refreshTree().catch(() => {}); }
       post("rev", { rev });
     }
-  } catch (err) { console.error(err); } finally { busy = false; }
+  } catch (err) { console.error(err); down(err); } finally { busy = false; }
+}
+// The core answers but cannot use its data (503 down: a full disk, 2026-10-25), or nothing answers: said in the header. Silent, the task list
+// emptied and the titles looked broken
+function down(err) {
+  const w = $("#down");
+  w.hidden = !err;
+  if (err) { w.replaceChildren(...lead(`⚠ ${err.body?.down ? err.message : `The core does not answer (${err.message})`}`)); w.title = err.message; }
 }
 function wsDialog(required) {   // the workspace folder: asked on a fresh install (no cancel), changeable later unless --workspace fixed it
   const d = $("#wsdlg"), err = $("#wserr"), note = $("#wsnote"), inp = $("#wspath"), ok = $("#wsok");

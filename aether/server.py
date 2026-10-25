@@ -48,11 +48,15 @@ therefore delivers every HTML page as one document (`bundle`): relative scripts,
 from __future__ import annotations
 
 import base64
+import errno
+import gzip
+import http.client
 import json
 import mimetypes
 import ipaddress
 import os
 import re
+import sqlite3
 import tempfile
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -66,6 +70,8 @@ from .store import Store, session_of
 CORE = Path(__file__).resolve().parent
 STATIC = CORE / "static"
 PAGE_SHARED = {"aether-sdk.js": "aether-sdk.js", "aether-icons.js": "icons.js"}   # what any page may load from beside its entry (2026-10-24: the icons too, so a preview draws the same one-colour icons)
+PORT_GZIP_MAX = 64 << 20   # api/port packs a body up to this size when the browser takes gzip
+PACKED_TYPES = {"application/gzip", "application/x-gzip", "application/zip", "application/x-7z-compressed", "application/zstd", "application/pdf"}   # already packed: gzip gains nothing
 SPARE = CORE / "fallback"   # extensions shipped with the core (claude-code, text-preview), used only for an id no other folder has
 REPO = CORE.parent
 
@@ -640,6 +646,65 @@ def handler(core: Core):
                 while chunk := t.read(1 << 20):
                     self.wfile.write(chunk)
 
+        def _port(self, path: str, method: str):
+            """GET|POST /api/port/<port>/<rest>: the core fetches http://127.0.0.1:<port>/<rest> for an app's page (spec §3 fetch). The shell uses it
+            when the browser cannot reach this machine's loopback ―― the page is on another host (Google Cloud Shell's web preview, a tunnel) and
+            127.0.0.1 there is the person's own machine (and Chrome refuses a public page's requests to loopback). Only from the shell
+            (X-Aether: 1, not a sandboxed frame) and only to a port the app's aether.json (X-Aether-App: its folder) names in "ports"."""
+            if self.headers.get("X-Aether") != "1" or self.headers.get("Origin") == "null":
+                return self._json({"error": "forbidden"}, 403)
+            port_s, _, rest = path[len("/api/port/"):].partition("/")
+            if not port_s.isdigit() or not 0 < int(port_s) < 65536:
+                return self._json({"error": "no such port"}, 400)
+            port = int(port_s)
+            app = extensions.app_of(files.resolve(core.need_ws(), self.headers.get("X-Aether-App", ""), core.deny()))
+            if not app or port not in (app.get("ports") or []) or port == self.server.server_address[1]:
+                return self._json({"error": "apps may fetch only from the ports their aether.json names"}, 403)
+            n = int(self.headers.get("Content-Length") or 0)
+            body = self.rfile.read(n) if method == "POST" and n else None
+            q = urlparse(self.path).query
+            head = {"Content-Type": self.headers["Content-Type"]} if body is not None and self.headers.get("Content-Type") else {}
+            c = http.client.HTTPConnection("127.0.0.1", port, timeout=600)
+            try:
+                c.request(method, "/" + quote(rest, safe="/%:@!$&'()*+,;=-._~") + (f"?{q}" if q else ""), body=body, headers=head)
+                r = c.getresponse()
+            except OSError as e:
+                c.close()
+                return self._json({"error": f"nothing answers on 127.0.0.1:{port} ({e.__class__.__name__})"}, 502)
+            try:
+                size, ctype = int(r.getheader("Content-Length") or -1), (r.getheader("Content-Type") or "").split(";")[0].strip().lower()
+                packed = (0 < size <= PORT_GZIP_MAX and not r.getheader("Content-Encoding") and "gzip" in (self.headers.get("Accept-Encoding") or "")
+                          and not ctype.startswith(("image/", "video/", "audio/")) and ctype not in PACKED_TYPES)
+                body = gzip.compress(r.read(), 5) if packed else None   # a page far away (Cloud Shell's web preview moves ~0.5 MB/s): meshes and JSON shrink 3-5x
+                self.send_response(r.status, r.reason)
+                for k in ("Content-Type", "Content-Length", "Content-Encoding", "Content-Disposition"):
+                    if r.getheader(k) and not (packed and k == "Content-Length"):
+                        self.send_header(k, r.getheader(k))
+                if packed:
+                    self.send_header("Content-Encoding", "gzip")
+                    self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("X-Content-Type-Options", "nosniff")
+                if size < 0:
+                    self.close_connection = True   # no length: the end of the body is the end of the connection
+                self.end_headers()
+                if packed:
+                    self.wfile.write(body)
+                while not packed and (chunk := r.read(1 << 16)):
+                    self.wfile.write(chunk)
+            finally:
+                c.close()
+
+        def _down(self, e: Exception):
+            """The core's database or its disk failed: said in one line, not a dropped connection the page cannot explain (2026-10-25: a full
+            disk made every read fail with "disk I/O error", the thread died before answering, the proxy in front said 503 and the tasks lost their titles)."""
+            full = isinstance(e, OSError) and e.errno == errno.ENOSPC or any(w in str(e) for w in ("disk I/O", "disk is full"))
+            try:
+                print(f"[error] {self.command} {self.path[:80]}: {e.__class__.__name__}: {e}", flush=True)
+            except OSError:
+                pass   # the log is on the same disk
+            return self._json({"error": f"the core could not use its data ({e}){': the disk is full ― free some space and reload' if full else ''}", "down": True}, 503)
+
         def _mic(self, jid: str, ticket: str):
             """🎙 GET /api/jobs/<id>/audio?ticket= with Upgrade: websocket → 101, then the mic runs on this thread (voice.py)."""
             key = self.headers.get("Sec-WebSocket-Key", "")
@@ -675,6 +740,8 @@ def handler(core: Core):
             try:
                 if path.startswith("/api/jobs/") and path.endswith("/audio"):
                     return self._mic(path.split("/")[3], q.get("ticket", ""))
+                if path.startswith("/api/port/"):
+                    return self._port(path, "GET")
                 if path.rsplit("/", 1)[-1] in PAGE_SHARED and (path.startswith("/x/") or path.startswith("/files/")):
                     return self._file(STATIC / PAGE_SHARED[path.rsplit("/", 1)[-1]], False)
                 if path == "/":
@@ -728,12 +795,25 @@ def handler(core: Core):
                 return self._json({"error": "not found"}, 404)
             except ValueError as e:
                 return self._json({"error": str(e)}, 400)
+            except sqlite3.Error as e:
+                return self._down(e)
+            except OSError as e:
+                if e.errno != errno.ENOSPC:
+                    raise
+                return self._down(e)
 
         def do_POST(self):
             if not self._host_ok():
                 return
             u = urlparse(self.path)
             path, by = u.path, None
+            if path.startswith("/api/port/"):
+                try:
+                    return self._port(unquote(path), "POST")
+                except NoWorkspace as e:
+                    return self._json({"error": str(e)}, 409)
+                except (files.Outside, ValueError) as e:
+                    return self._json({"error": str(e)}, 403)
             if self.headers.get("X-Aether") != "1" or self.headers.get("Origin") == "null":
                 tok = (self.headers.get("Authorization") or "").removeprefix("Bearer ").strip()   # an agent's AETHER_TOKEN (spec §4.3)
                 by = core.runner.bearer(tok) if tok and self.headers.get("Origin") is None else None
@@ -794,6 +874,12 @@ def handler(core: Core):
                 return self._json({"error": str(e)}, 404)
             except ValueError as e:
                 return self._json({"error": str(e)}, 400)
+            except sqlite3.Error as e:
+                return self._down(e)
+            except OSError as e:
+                if e.errno != errno.ENOSPC:
+                    raise
+                return self._down(e)
 
     return H
 

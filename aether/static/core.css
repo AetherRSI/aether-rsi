@@ -271,7 +271,8 @@ body.resizing { cursor: col-resize; user-select: none; } body.resizing iframe { 
 #atmenu button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 #atmenu button[aria-selected="true"], #atmenu button:hover { background: #fff6d6; }
 .msg.me .src.at { margin: 0 1px; padding: 0 6px; vertical-align: baseline; }
-#warn { color: #b3261e; cursor: help; }
+#warn, #down { color: #b3261e; cursor: help; }
+#down { margin-left: 10px; font-weight: 600; }
 #log .hello { color: #1d2433; }
 
 /* 📋 Tasks */
@@ -326,8 +327,23 @@ td.c-act button:hover { background: #eef2fb; }
 .frow.dir .tw:hover { background: rgba(0, 0, 0, .08); border-radius: 3px; }
 .frow .ic { flex: none; width: 18px; margin-right: 4px; display: inline-flex; align-items: center; justify-content: center; color: #6b7280; }
 .frow .ic .mui { width: 16px; height: 16px; vertical-align: 0; }
-.frow .nm { overflow: hidden; text-overflow: ellipsis; }
+.frow .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; }   /* shrinks so the ★ at the end stays in view */
 .frow .fapp { margin-right: 4px; display: inline-flex; color: #6b7280; } .frow .fapp .mui { width: 16px; height: 16px; }
+/* ★ favorites: the star shows on the row under the pointer (always once starred); the list sits above the tree and scrolls past a third of it */
+.frow .fstar { flex: none; margin-left: auto; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 3px; background: none; color: #8a8a8a; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; visibility: hidden; }
+.frow .fstar .mui { width: 15px; height: 15px; }
+.frow:hover .fstar, .frow.focus .fstar, .frow .fstar.on { visibility: visible; }
+.frow .fstar.on { color: #d29b00; }
+.frow .fstar:hover { background: rgba(0, 0, 0, .08); color: #3b3b3b; }
+.frow .fstar.on:hover { color: #a87c00; }
+@media (hover: none) { .frow .fstar { visibility: visible; opacity: .45; } .frow .fstar.on { opacity: 1; } }
+#ffav { flex: none; max-height: 33%; overflow: auto; padding-bottom: 6px; border-bottom: 1px solid #e5e5e5; margin-bottom: 4px; }
+.fx-sub { display: flex; align-items: center; gap: 4px; height: 22px; padding-left: 12px; font-size: 11px; font-weight: 700; letter-spacing: .02em; color: #6f6f6f; }
+.fx-sub .mui { width: 13px; height: 13px; color: #d29b00; }
+.ffrow { padding-left: 12px; }
+.ffrow .fwhere { flex: 1 1 0; margin-left: 6px; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: #8a8a8a; }   /* the folder gives way first, the name keeps its room */
+.ffrow .nm { flex: 0 0 auto; max-width: 70%; }
+.ffrow.gone .nm { color: #a0a0a0; text-decoration: line-through; }
 /* files dragged from the desktop: the folder they will land in (the whole tree for the workspace root) */
 #ftree.fdrop, .frow.fdrop { outline: 1px dashed #0090f1; outline-offset: -1px; background: #e5f1fb; }
 .fsash { flex: none; width: 4px; margin: 0 8px 0 2px; border-radius: 2px; cursor: col-resize; }

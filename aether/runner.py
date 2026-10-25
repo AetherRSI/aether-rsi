@@ -161,11 +161,11 @@ class Runner:
             start["audio"] = True
         self.voiced.discard(jid)
         self.logs.mkdir(parents=True, exist_ok=True)
-        extra, tok = {}, None
+        extra, tok = ({"AETHER_URL": self.api.rstrip("/")} if self.api else {}), None   # the core's URL: a folder's scripts reach the core here, whatever port it runs on
         if a.get("dispatch") and self.api:   # spec §4.3: the core's API, with a key good for this job only
             tok = secrets.token_urlsafe(24)
             self.tokens[tok] = jid
-            extra = {"AETHER_API": self.api, "AETHER_TOKEN": tok}
+            extra |= {"AETHER_API": self.api, "AETHER_TOKEN": tok}
         with open(self.logs / f"{jid}.err", "w") as err:   # the agent writes its stderr there itself (it outlives a swap)
             p = subprocess.Popen(command(a), cwd=str(self.ws), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=err,
                                  bufsize=0, start_new_session=True, env={**os.environ, **self.env(), **extra})
